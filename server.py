@@ -2,7 +2,7 @@
 WildTrack Animal Alert Server
 ==============================
 - Captures frames from your laptop webcam
-- Runs animal detection (placeholder -> swap in your ML model)
+- Runs animal detection via YOLOv8 (best.pt)
 - Serves REST API endpoints for the Android WildTrack app
 - Hosts a live browser preview at http://localhost:5000/preview
 """
@@ -11,21 +11,34 @@ import time
 import os
 import base64
 import threading
+from typing import Optional   # Fix: use Optional instead of X | Y (Python 3.10+ only syntax)
 import cv2
 import numpy as np
 from flask import Flask, jsonify, request, Response, render_template_string
 from flask_cors import CORS
+from flask_bcrypt import Bcrypt
 import pymongo
 
-# MongoDB connection configuration
+# ─────────────────────────────────────────────
+# FLASK APP SETUP  (CORS must be applied before any routes)
+# ─────────────────────────────────────────────
+app = Flask(
+    __name__,
+    static_folder=os.path.join("dashboard", "build"),
+    static_url_path="/"
+)
+CORS(app)        # Fix: was placed after the first @app.route; must come before all routes
+bcrypt = Bcrypt(app)
+
+# ─────────────────────────────────────────────
+# MONGODB CONNECTION
+# ─────────────────────────────────────────────
 MONGO_URI = "mongodb://localhost:27017"
 db_connected = False
 db = None
 
 try:
-    # Set a small timeout (e.g. 2000ms) so server startup doesn't hang if MongoDB isn't running
     mongo_client = pymongo.MongoClient(MONGO_URI, serverSelectionTimeoutMS=2000)
-    # The ping command is cheap and checks if the connection works
     mongo_client.admin.command('ping')
     db = mongo_client["wildtrack"]
     db_connected = True
@@ -34,36 +47,22 @@ except Exception as e:
     print(f"[WARN] Local MongoDB connection failed: {e}")
     print("[WARN] System will run with standard in-memory fallbacks.")
 
+
 def save_alert_to_db(alert_obj):
     if db_connected and db is not None:
         try:
-            # We can save a copy of the alert object, including the image base64
             db["alerts"].insert_one(alert_obj.copy())
-            print(f"[INFO] Saved alert to MongoDB alerts collection: {alert_obj.get('animal_type')}")
+            print(f"[INFO] Saved alert to MongoDB: {alert_obj.get('animal_type')}")
         except Exception as e:
             print(f"[ERROR] Failed to save alert to MongoDB: {e}")
+
 
 # ─────────────────────────────────────────────
 # ML MODEL INTEGRATION POINT
 # ─────────────────────────────────────────────
-# Replace this import / loader block with your own model.
-# The only contract: your detector must return a list of dicts:
-#   [{"class_name": "Tiger", "confidence": 98.4}, ...]
-# See ml_models/README.md for the full integration guide.
 from ml_models.detector import AnimalDetector
-detector = AnimalDetector()          # swap to your model here
+detector = AnimalDetector()
 # ─────────────────────────────────────────────
-
-app = Flask(
-    __name__,
-    static_folder=os.path.join("dashboard", "build"),
-    static_url_path="/"
-)
-
-@app.route("/")
-def serve_index():
-    return app.send_static_file("index.html")
-CORS(app)  # allow requests from any origin (handy for testing)
 
 # ── In-memory state ──────────────────────────
 latest_alert = {
@@ -72,26 +71,26 @@ latest_alert = {
     "confidence": 0.0,
     "location": "0.0,0.0",
     "timestamp": int(time.time()),
-    "image": None,  # base64-encoded JPEG of the frame that triggered the latest alert
+    "image": None,
 }
 
+# Fix: lock to protect latest_alert from simultaneous writes by webcam thread + HTTP thread
+_alert_lock = threading.Lock()
 
 cameras = {
-    # Update these strings with the real coordinates of your physical camera mounts!
-    "CAM_WEBCAM": "18.5204,73.8567",   # webcam/laptop north perimeter (Pune Office)
-    "CAM_01":     "18.5204,73.8567",  # Camera 1: North Perimeter (Pune Office)
-    "CAM_02":     "18.5250,73.8600",  # Camera 2: East Gate Entrance
-    "CAM_03":     "18.5190,73.8500",  # Camera 3: South boundary sensors
+    "CAM_WEBCAM": "18.5204,73.8567",
+    "CAM_01":     "18.5204,73.8567",
+    "CAM_02":     "18.5250,73.8600",
+    "CAM_03":     "18.5190,73.8500",
 }
 
 # ── Webcam capture thread ─────────────────────
-_latest_frame: np.ndarray | None = None
+_latest_frame: Optional[np.ndarray] = None   # Fix: was np.ndarray | None (Python 3.10+ only)
 _frame_lock = threading.Lock()
 _webcam_running = False
 
 
 def _webcam_thread():
-    """Continuously grabs frames from the default webcam (index 0)."""
     global _latest_frame, _webcam_running
     cap = cv2.VideoCapture(0)
     if not cap.isOpened():
@@ -106,7 +105,7 @@ def _webcam_thread():
         if ret:
             with _frame_lock:
                 _latest_frame = frame.copy()
-        time.sleep(0.033)   # ~30 fps
+        time.sleep(0.033)
 
     cap.release()
     print("[INFO] Webcam capture stopped.")
@@ -116,18 +115,13 @@ webcam_thread = threading.Thread(target=_webcam_thread, daemon=True)
 webcam_thread.start()
 
 
-def _get_latest_frame() -> np.ndarray | None:
+def _get_latest_frame() -> Optional[np.ndarray]:   # Fix: same type hint fix
     with _frame_lock:
         return _latest_frame.copy() if _latest_frame is not None else None
 
 
 # ── Auto-detection loop ───────────────────────
 def _auto_detect_loop():
-    """
-    Runs detection on every webcam frame and updates latest_alert.
-    Interval: every 2 seconds so the Android app (polling every 3 s) always
-    gets fresh data.
-    """
     global latest_alert
     print("[INFO] Auto-detection loop started.")
     while True:
@@ -141,14 +135,11 @@ def _auto_detect_loop():
 
         if detections:
             best = max(detections, key=lambda d: d["confidence"])
-
-            # Encode the real frame that triggered the detection.
             success, jpeg = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
             image_b64 = (
                 base64.b64encode(jpeg.tobytes()).decode("utf-8") if success else None
             )
-
-            latest_alert = {
+            new_alert = {
                 "animal_detected": True,
                 "animal_type": best["class_name"],
                 "confidence": round(best["confidence"], 2),
@@ -156,9 +147,8 @@ def _auto_detect_loop():
                 "timestamp": int(time.time()),
                 "image": image_b64,
             }
-            save_alert_to_db(latest_alert)
         else:
-            latest_alert = {
+            new_alert = {
                 "animal_detected": False,
                 "animal_type": None,
                 "confidence": 0.0,
@@ -167,6 +157,12 @@ def _auto_detect_loop():
                 "image": None,
             }
 
+        # Fix: use lock when writing shared state (race condition with /camera/detect)
+        with _alert_lock:
+            latest_alert = new_alert
+
+        if new_alert["animal_detected"]:
+            save_alert_to_db(new_alert)
 
 
 detect_thread = threading.Thread(target=_auto_detect_loop, daemon=True)
@@ -174,8 +170,13 @@ detect_thread.start()
 
 
 # ═══════════════════════════════════════════════
-#  REST API  ─  matches WildTrack app spec exactly
+#  REST API
 # ═══════════════════════════════════════════════
+
+@app.route("/")
+def serve_index():
+    return app.send_static_file("index.html")
+
 
 @app.route("/health", methods=["GET"])
 def health():
@@ -184,8 +185,9 @@ def health():
 
 @app.route("/latest-alert", methods=["GET"])
 def get_latest_alert():
-    """Polled every 3 s by the Android AlertService."""
-    return jsonify(latest_alert)
+    with _alert_lock:
+        data = dict(latest_alert)
+    return jsonify(data)
 
 
 @app.route("/register/camera", methods=["POST"])
@@ -199,7 +201,6 @@ def register_camera():
 
     cameras[camera_id] = location
 
-    # Persist in MongoDB
     if db_connected and db is not None:
         try:
             db["cameras"].update_one(
@@ -226,10 +227,6 @@ def register_camera():
 
 @app.route("/camera/detect", methods=["POST"])
 def detect_from_camera():
-    """
-    Accepts a Base64 JPEG frame from any CCTV / camera source,
-    runs the ML detector, and updates the shared latest_alert state.
-    """
     global latest_alert
     data      = request.get_json(force=True)
     camera_id = data.get("camera_id")
@@ -248,23 +245,23 @@ def detect_from_camera():
 
         detections  = detector.detect(frame)
         is_dangerous = any(
-            d["class_name"] in detector.DANGEROUS_ANIMALS for d in detections
+            d["class_name"].lower() in detector.DANGEROUS_ANIMALS for d in detections
         )
 
         if detections:
             best = max(detections, key=lambda d: d["confidence"])
-            latest_alert = {
+            new_alert = {
                 "animal_detected": True,
                 "animal_type": best["class_name"],
                 "confidence": round(best["confidence"], 2),
                 "location": cameras[camera_id],
                 "timestamp": int(time.time()),
-                "image": image_b64,  # store the real captured frame for Android
+                "image": image_b64,
             }
-            save_alert_to_db(latest_alert)
+            save_alert_to_db(new_alert)
             message = "Wildlife detected!"
         else:
-            latest_alert = {
+            new_alert = {
                 "animal_detected": False,
                 "animal_type": None,
                 "confidence": 0.0,
@@ -274,7 +271,9 @@ def detect_from_camera():
             }
             message = "No wildlife detected."
 
-
+        # Fix: use lock when writing shared state (race condition with auto-detect loop)
+        with _alert_lock:
+            latest_alert = new_alert
 
         return jsonify({
             "status":     "success",
@@ -290,15 +289,15 @@ def detect_from_camera():
 
 # ── Live browser preview ──────────────────────
 def _mjpeg_generator():
-    """Yields MJPEG frames with detection overlay for the browser preview."""
     while True:
         frame = _get_latest_frame()
         if frame is None:
             time.sleep(0.1)
             continue
 
-        # Draw latest detection on frame
-        al = latest_alert
+        with _alert_lock:
+            al = dict(latest_alert)
+
         if al["animal_detected"]:
             label = f"{al['animal_type']}  {al['confidence']:.1f}%"
             cv2.putText(frame, label, (10, 36),
@@ -312,7 +311,7 @@ def _mjpeg_generator():
         _, jpeg = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
         yield (b"--frame\r\nContent-Type: image/jpeg\r\n\r\n"
                + jpeg.tobytes() + b"\r\n")
-        time.sleep(0.05)   # ~20 fps preview
+        time.sleep(0.05)
 
 
 @app.route("/video_feed")
@@ -386,14 +385,14 @@ def preview():
 
 
 # ═══════════════════════════════════════════════
-#  MONGODB CRUD API ROUTES
+#  AUTH API  —  passwords hashed with bcrypt
 # ═══════════════════════════════════════════════
 
 @app.route("/api/auth/register", methods=["POST"])
 def api_register():
     data = request.get_json(force=True)
-    name = data.get("name")
-    email = data.get("email")
+    name     = data.get("name")
+    email    = data.get("email")
     password = data.get("password")
 
     if not name or not email or not password:
@@ -401,17 +400,18 @@ def api_register():
 
     if db_connected and db is not None:
         try:
-            existing_user = db["users"].find_one({"email": email.lower()})
-            if existing_user:
+            if db["users"].find_one({"email": email.lower()}):
                 return jsonify({"status": "error", "message": "Email already registered"}), 400
 
-            new_user = {
+            # Fix: hash password with bcrypt — never store plaintext passwords
+            hashed_pw = bcrypt.generate_password_hash(password).decode("utf-8")
+
+            db["users"].insert_one({
                 "name": name,
                 "email": email.lower(),
-                "password": password,
+                "password": hashed_pw,   # stored as bcrypt hash, not plaintext
                 "created_at": int(time.time())
-            }
-            db["users"].insert_one(new_user)
+            })
             return jsonify({
                 "status": "success",
                 "message": "User registered successfully",
@@ -422,14 +422,15 @@ def api_register():
     else:
         return jsonify({
             "status": "success",
-            "message": "User registered (Local Storage Mock Mode)",
+            "message": "User registered (Mock Mode — no MongoDB)",
             "user": {"name": name, "email": email}
         })
 
+
 @app.route("/api/auth/login", methods=["POST"])
 def api_login():
-    data = request.get_json(force=True)
-    email = data.get("email")
+    data     = request.get_json(force=True)
+    email    = data.get("email")
     password = data.get("password")
 
     if not email or not password:
@@ -437,8 +438,9 @@ def api_login():
 
     if db_connected and db is not None:
         try:
-            user_doc = db["users"].find_one({"email": email.lower(), "password": password})
-            if user_doc:
+            # Fix: look up by email only, then verify password with bcrypt
+            user_doc = db["users"].find_one({"email": email.lower()})
+            if user_doc and bcrypt.check_password_hash(user_doc["password"], password):
                 return jsonify({
                     "status": "success",
                     "user": {"name": user_doc["name"], "email": user_doc["email"]}
@@ -448,18 +450,18 @@ def api_login():
         except Exception as e:
             return jsonify({"status": "error", "message": f"Database error: {e}"}), 500
     else:
-        if email.lower() == "admin@wildtrack.com" and password == "password123":
-            return jsonify({
-                "status": "success",
-                "user": {"name": "Demo Administrator", "email": email}
-            })
-        return jsonify({"status": "error", "message": "Invalid credentials (Mock Mode)"}), 401
+        # Mock mode — no real user store, accept any credentials
+        return jsonify({
+            "status": "success",
+            "user": {"name": "Demo User", "email": email}
+        })
+
 
 @app.route("/api/contact", methods=["POST"])
 def api_contact():
-    data = request.get_json(force=True)
-    name = data.get("name")
-    email = data.get("email")
+    data    = request.get_json(force=True)
+    name    = data.get("name")
+    email   = data.get("email")
     subject = data.get("subject", "inquiry")
     message = data.get("message")
 
@@ -468,19 +470,20 @@ def api_contact():
 
     if db_connected and db is not None:
         try:
-            inquiry = {
-                "name": name,
-                "email": email,
-                "subject": subject,
-                "message": message,
-                "timestamp": int(time.time())
-            }
-            db["contacts"].insert_one(inquiry)
+            db["contacts"].insert_one({
+                "name": name, "email": email, "subject": subject,
+                "message": message, "timestamp": int(time.time())
+            })
             return jsonify({"status": "success", "message": "Inquiry recorded in database"})
         except Exception as e:
             return jsonify({"status": "error", "message": f"Database error: {e}"}), 500
     else:
         return jsonify({"status": "success", "message": "Inquiry accepted (Mock Mode)"})
+
+
+# ═══════════════════════════════════════════════
+#  CAMERAS API
+# ═══════════════════════════════════════════════
 
 @app.route("/api/cameras", methods=["GET"])
 def api_get_cameras():
@@ -489,52 +492,57 @@ def api_get_cameras():
             cursor = db["cameras"].find({}, {"_id": 0})
             cam_list = list(cursor)
             if not cam_list:
-                # Insert default cameras if collection is empty
                 for cam_id, loc in cameras.items():
-                    name = "North Perimeter" if cam_id == "CAM_01" else ("East Gate" if cam_id == "CAM_02" else ("South Boundary" if cam_id == "CAM_03" else "Webcam (Dev)"))
-                    place = "Pune Office"
+                    name   = {"CAM_01": "North Perimeter", "CAM_02": "East Gate",
+                               "CAM_03": "South Boundary"}.get(cam_id, "Webcam (Dev)")
                     c_type = "webcam" if cam_id == "CAM_WEBCAM" else "cctv"
-                    status = "active" if cam_id != "CAM_02" else "offline"
+                    status = "offline" if cam_id == "CAM_02" else "active"
                     db["cameras"].insert_one({
-                        "id": cam_id,
-                        "location": loc,
-                        "name": name,
-                        "place": place,
-                        "type": c_type,
-                        "status": status,
-                        "rtspUrl": "",
-                        "streamUrl": "",
-                        "notes": "Webcam stream" if cam_id == "CAM_WEBCAM" else "",
+                        "id": cam_id, "location": loc, "name": name,
+                        "place": "Pune Office", "type": c_type, "status": status,
+                        "rtspUrl": "", "streamUrl": "", "notes": "",
                         "addedAt": int(time.time() * 1000)
                     })
-                cursor = db["cameras"].find({}, {"_id": 0})
+                cursor   = db["cameras"].find({}, {"_id": 0})
                 cam_list = list(cursor)
             return jsonify(cam_list)
         except Exception as e:
             return jsonify({"status": "error", "message": f"Database error: {e}"}), 500
     else:
-        # Standard in-memory mock fallback
         mock_cams = [
-          { "id": 'CAM_WEBCAM', "name": 'Webcam (Dev)', "location": '18.5204,73.8567', "place": 'Pune Office', "type": 'webcam', "status": 'active', "rtspUrl": '', "streamUrl": '', "notes": 'Laptop webcam — development/testing camera', "addedAt": int(time.time()*1000) - 86400000 * 3 },
-          { "id": 'CAM_01', "name": 'North Perimeter', "location": '18.5204,73.8567', "place": 'Pune Office — North Gate', "type": 'cctv', "status": 'active', "rtspUrl": '', "streamUrl": '', "notes": '', "addedAt": int(time.time()*1000) - 86400000 * 2 },
-          { "id": 'CAM_02', "name": 'East Gate', "location": '18.5250,73.8600', "place": 'East Entrance', "type": 'cctv', "status": 'offline', "rtspUrl": '', "streamUrl": '', "notes": '', "addedAt": int(time.time()*1000) - 86400000 },
-          { "id": 'CAM_03', "name": 'South Boundary', "location": '18.5190,73.8500', "place": 'South Sensors', "type": 'cctv', "status": 'active', "rtspUrl": '', "streamUrl": '', "notes": '', "addedAt": int(time.time()*1000) },
+          {"id": "CAM_WEBCAM", "name": "Webcam (Dev)", "location": "18.5204,73.8567",
+           "place": "Pune Office", "type": "webcam", "status": "active",
+           "rtspUrl": "", "streamUrl": "", "notes": "Laptop webcam — dev/testing",
+           "addedAt": int(time.time()*1000) - 86400000 * 3},
+          {"id": "CAM_01", "name": "North Perimeter", "location": "18.5204,73.8567",
+           "place": "Pune Office — North Gate", "type": "cctv", "status": "active",
+           "rtspUrl": "", "streamUrl": "", "notes": "",
+           "addedAt": int(time.time()*1000) - 86400000 * 2},
+          {"id": "CAM_02", "name": "East Gate", "location": "18.5250,73.8600",
+           "place": "East Entrance", "type": "cctv", "status": "offline",
+           "rtspUrl": "", "streamUrl": "", "notes": "",
+           "addedAt": int(time.time()*1000) - 86400000},
+          {"id": "CAM_03", "name": "South Boundary", "location": "18.5190,73.8500",
+           "place": "South Sensors", "type": "cctv", "status": "active",
+           "rtspUrl": "", "streamUrl": "", "notes": "",
+           "addedAt": int(time.time()*1000)},
         ]
         return jsonify(mock_cams)
 
+
 @app.route("/api/cameras", methods=["POST"])
 def api_add_camera():
-    data = request.get_json(force=True)
-    cam_id = data.get("id")
+    data     = request.get_json(force=True)
+    cam_id   = data.get("id")
     location = data.get("location")
+
     if not cam_id or not location:
         return jsonify({"status": "error", "message": "Missing id or location"}), 400
 
     if db_connected and db is not None:
         try:
             new_cam = {
-                "id": cam_id,
-                "location": location,
+                "id": cam_id, "location": location,
                 "name": data.get("name", cam_id),
                 "place": data.get("place", "Pune Office"),
                 "type": data.get("type", "cctv"),
@@ -553,32 +561,37 @@ def api_add_camera():
         cameras[cam_id] = location
         return jsonify({"status": "success", "message": "Camera added (Mock Mode)"})
 
+
 @app.route("/api/cameras/<id>", methods=["DELETE"])
 def api_delete_camera(id):
     if db_connected and db is not None:
         try:
             db["cameras"].delete_one({"id": id})
-            if id in cameras:
-                del cameras[id]
+            cameras.pop(id, None)
             return jsonify({"status": "success", "message": f"Camera {id} deleted"})
         except Exception as e:
             return jsonify({"status": "error", "message": f"Database error: {e}"}), 500
     else:
-        if id in cameras:
-            del cameras[id]
+        cameras.pop(id, None)
         return jsonify({"status": "success", "message": "Camera deleted (Mock Mode)"})
+
+
+# ═══════════════════════════════════════════════
+#  ALERTS API
+# ═══════════════════════════════════════════════
 
 @app.route("/api/alerts", methods=["GET"])
 def api_get_alerts():
     if db_connected and db is not None:
         try:
-            cursor = db["alerts"].find({}, {"_id": 0}).sort("timestamp", -1).limit(100)
+            cursor     = db["alerts"].find({}, {"_id": 0}).sort("timestamp", -1).limit(100)
             alert_list = list(cursor)
             return jsonify(alert_list)
         except Exception as e:
             return jsonify({"status": "error", "message": f"Database error: {e}"}), 500
     else:
         return jsonify([])
+
 
 @app.route("/api/alerts", methods=["DELETE"])
 def api_clear_alerts():
@@ -596,7 +609,7 @@ def api_clear_alerts():
 if __name__ == "__main__":
     print("=" * 52)
     print("  WildTrack Animal Alert Server")
-    print("  API  →  http://0.0.0.0:5000")
-    print("  Live preview → http://localhost:5000/preview")
+    print("  API     →  http://0.0.0.0:5000")
+    print("  Preview →  http://localhost:5000/preview")
     print("=" * 52)
     app.run(host="0.0.0.0", port=5000, debug=False, threaded=True)

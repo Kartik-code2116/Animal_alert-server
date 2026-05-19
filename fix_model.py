@@ -1,20 +1,21 @@
 """
 Run this ONCE to convert the best.pt folder into a proper single .pt file.
 Usage:  python fix_model.py
+        (run from the project root: D:\\9)projects\\Animal_alert server\\)
 """
 import torch
 import os
-import shutil
 
-folder = r"D:\9)projects\Animal_alert server\ml_models\best.pt"
-output = r"D:\9)projects\Animal_alert server\ml_models\best_fixed.pt"
+# Fix: use relative paths so this script works on any machine, not just D:\\9)projects\\...
+BASE_DIR  = os.path.dirname(os.path.abspath(__file__))
+folder    = os.path.join(BASE_DIR, "ml_models", "best.pt")
+output    = os.path.join(BASE_DIR, "ml_models", "best_fixed.pt")
 
-print("Loading model from folder...")
-# torch.load can load the folder-format directly
+print(f"Loading model from: {folder}")
 ckpt = torch.load(folder, map_location="cpu", weights_only=False)
 
-print("Saving as single .pt file...")
+print(f"Saving as single .pt file to: {output}")
 torch.save(ckpt, output)
 
-print(f"Done! Saved to: {output}")
-print("Now rename  best_fixed.pt  →  best2.pt  and update detector.py if needed.")
+print("Done!")
+print("Rename  best_fixed.pt  →  best.pt  (or update the path in detector.py) when ready.")

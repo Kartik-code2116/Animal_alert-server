@@ -2,7 +2,8 @@ import { Camera, AlertTriangle, CheckCircle, Activity, Clock, Eye } from 'lucide
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
 import { useMemo } from 'react';
 
-export default function Dashboard({ serverStatus, latestAlert, alertHistory, cameras }) {
+// Fix: accept serverBase from props so the live feed URL follows user-configured server address
+export default function Dashboard({ serverStatus, latestAlert, alertHistory, cameras, serverBase }) {
   const activeCams = cameras.filter(c => c.status === 'active').length;
   const offlineCams = cameras.filter(c => c.status === 'offline').length;
   const todayAlerts = useMemo(() => {
@@ -83,8 +84,9 @@ export default function Dashboard({ serverStatus, latestAlert, alertHistory, cam
           </div>
           {serverStatus === 'online' ? (
             <div className="live-feed-wrap">
+              {/* Fix: was hardcoded to http://localhost:5000/video_feed — now uses serverBase prop */}
               <img
-                src="http://localhost:5000/video_feed"
+                src={`${serverBase}/video_feed`}
                 alt="Live webcam feed"
                 className="live-feed-img"
                 onError={e => { e.target.style.display = 'none'; e.target.nextSibling.style.display = 'flex'; }}
