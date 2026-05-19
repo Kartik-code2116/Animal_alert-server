@@ -1,0 +1,73 @@
+/* ============================================================
+   WildTrack Dashboard — Global Styles
+   Dark industrial-tactical aesthetic
+   ============================================================ */
+
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+:root {
+  --bg-base:        #070b12;
+  --bg-surface:     #0d1420;
+  --bg-card:        #111b2e;
+  --bg-card-hover:  #162033;
+  --bg-input:       #0d1420;
+  --border:         rgba(255,255,255,0.07);
+  --border-active:  rgba(99,179,237,0.4);
+  --border-danger:  rgba(248,113,113,0.4);
+  --border-success: rgba(52,211,153,0.4);
+  --border-warn:    rgba(251,191,36,0.4);
+
+  --text-primary:   #e8edf5;
+  --text-secondary: #7a8fa8;
+  --text-muted:     #4a5568;
+  --text-accent:    #63b3ed;
+
+  --accent:         #63b3ed;
+  --accent-glow:    rgba(99,179,237,0.15);
+  --danger:         #f87171;
+  --danger-glow:    rgba(248,113,113,0.15);
+  --success:        #34d399;
+  --success-glow:   rgba(52,211,153,0.15);
+  --warn:           #fbbf24;
+  --warn-glow:      rgba(251,191,36,0.12);
+
+  --radius-sm:  6px;
+  --radius-md:  10px;
+  --radius-lg:  14px;
+  --radius-xl:  20px;
+
+  --font-sans: 'Space Grotesk', sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
+
+  --sidebar-w: 230px;
+  --topbar-h:  60px;
+}
+
+html, body, #root {
+  height: 100%;
+  background: var(--bg-base);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 99px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.15); }
+
+/* Focus rings */
+*:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+button { cursor: pointer; font-family: var(--font-sans); }
+input, select, textarea { font-family: var(--font-sans); }
