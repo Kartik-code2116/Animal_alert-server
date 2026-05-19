@@ -1,0 +1,7 @@
+# This folder is intentionally empty.
+# Place your trained model files here, e.g.:
+#   best.pt          (YOLOv8 custom trained)
+#   yolov8n.pt       (YOLOv8 pretrained COCO)
+#   model.tflite     (TensorFlow Lite)
+#
+# Then follow the instructions in README.md to connect it.

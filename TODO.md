@@ -1,0 +1,5 @@
+- [x] Inspect server.py for latest_alert structure and detection handlers
+- [x] Update server.py: add latest_alert.image
+- [x] Update /camera/detect: store incoming image_b64 when detections exist, clear otherwise
+- [x] Update local webcam auto-detection loop: encode current frame to base64 and store/clear image based on detections
+- [x] Quick runtime sanity check: GET /latest-alert returns image field during detections
