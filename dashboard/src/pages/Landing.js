@@ -29,11 +29,15 @@ export default function Landing({ user, onLogin, onLogout, setPage }) {
 
   // Mock database initialization
   useEffect(() => {
-    if (!localStorage.getItem('wt_users')) {
-      const defaultUsers = [
-        { name: 'Demo Administrator', email: 'admin@wildtrack.com', password: 'password123' }
-      ];
-      localStorage.setItem('wt_users', JSON.stringify(defaultUsers));
+    try {
+      if (!localStorage.getItem('wt_users')) {
+        const defaultUsers = [
+          { name: 'Demo Administrator', email: 'admin@wildtrack.com', password: 'password123' }
+        ];
+        localStorage.setItem('wt_users', JSON.stringify(defaultUsers));
+      }
+    } catch (e) {
+      console.warn("Failed to initialize wt_users in localStorage:", e);
     }
   }, []);
 
@@ -120,10 +124,14 @@ export default function Landing({ user, onLogin, onLogout, setPage }) {
         setAuthSuccess('Account created successfully! Logging you in...');
         
         // Also save locally for fallback sync
-        const users = JSON.parse(localStorage.getItem('wt_users') || '[]');
-        if (!users.find(u => u.email.toLowerCase() === email.toLowerCase())) {
-          users.push({ name, email, password });
-          localStorage.setItem('wt_users', JSON.stringify(users));
+        try {
+          const users = JSON.parse(localStorage.getItem('wt_users') || '[]');
+          if (!users.find(u => u.email.toLowerCase() === email.toLowerCase())) {
+            users.push({ name, email, password });
+            localStorage.setItem('wt_users', JSON.stringify(users));
+          }
+        } catch (e) {
+          console.warn("Failed to save wt_users in localStorage:", e);
         }
 
         setTimeout(() => {
@@ -137,8 +145,12 @@ export default function Landing({ user, onLogin, onLogout, setPage }) {
         setAuthError(data.message || 'Registration failed');
       }
     } catch (err) {
-      console.warn("MongoDB auth server offline, falling back to Local Storage signup:", err);
-      const users = JSON.parse(localStorage.getItem('wt_users') || '[]');
+      let users = [];
+      try {
+        users = JSON.parse(localStorage.getItem('wt_users') || '[]');
+      } catch (e) {
+        console.warn("Failed to read wt_users from localStorage:", e);
+      }
       if (users.find(u => u.email.toLowerCase() === email.toLowerCase())) {
         setAuthError('Email already registered');
         return;
@@ -146,7 +158,11 @@ export default function Landing({ user, onLogin, onLogout, setPage }) {
 
       const newUser = { name, email, password };
       users.push(newUser);
-      localStorage.setItem('wt_users', JSON.stringify(users));
+      try {
+        localStorage.setItem('wt_users', JSON.stringify(users));
+      } catch (e) {
+        console.warn("Failed to save wt_users in localStorage:", e);
+      }
 
       setAuthSuccess('Account created successfully! (Offline Local Storage Mode)');
       setTimeout(() => {

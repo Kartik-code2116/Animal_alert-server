@@ -17,8 +17,13 @@ export default function Settings() {
   const [saved, setSaved] = useState(false);
 
   const handleSave = () => {
-    localStorage.setItem('wt_prefs', JSON.stringify(prefs));
-    setSaved(true);
+    try {
+      localStorage.setItem('wt_prefs', JSON.stringify(prefs));
+      setSaved(true);
+    } catch (e) {
+      console.warn('Failed to save wt_prefs to localStorage:', e);
+      alert('Failed to save preferences: storage full or restricted.');
+    }
     setTimeout(() => setSaved(false), 2000);
   };
 

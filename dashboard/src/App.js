@@ -59,10 +59,39 @@ export default function App() {
   alertHistoryRef.current = alertHistory;
 
   // Persist state to localStorage
-  useEffect(() => { localStorage.setItem('wt_cameras', JSON.stringify(cameras)); }, [cameras]);
-  useEffect(() => { localStorage.setItem('wt_serverconfig', JSON.stringify(serverConfig)); }, [serverConfig]);
-  // Fix: persist alertHistory (was missing — history reset on every page reload)
-  useEffect(() => { localStorage.setItem('wt_alertHistory', JSON.stringify(alertHistory)); }, [alertHistory]);
+  useEffect(() => {
+    try {
+      localStorage.setItem('wt_cameras', JSON.stringify(cameras));
+    } catch (e) {
+      console.warn('Failed to save cameras to localStorage:', e);
+    }
+  }, [cameras]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('wt_serverconfig', JSON.stringify(serverConfig));
+    } catch (e) {
+      console.warn('Failed to save server config to localStorage:', e);
+    }
+  }, [serverConfig]);
+
+  // Fix: persist alertHistory and prevent QuotaExceededError by keeping metadata but removing image data for older items
+  useEffect(() => {
+    try {
+      // Keep the full state in memory/React, but save a pruned version to localStorage.
+      // We strip the heavy base64 image strings from alerts older than the most recent 10.
+      const prunedHistory = alertHistory.map((alert, index) => {
+        if (index >= 10 && alert.image) {
+          const { image, ...rest } = alert;
+          return rest;
+        }
+        return alert;
+      });
+      localStorage.setItem('wt_alertHistory', JSON.stringify(prunedHistory));
+    } catch (e) {
+      console.warn('Failed to save alert history to localStorage:', e);
+    }
+  }, [alertHistory]);
 
   // Health check — re-runs when serverConfig.host or serverConfig.port changes
   useEffect(() => {
