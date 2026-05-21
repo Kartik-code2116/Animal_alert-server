@@ -23,7 +23,13 @@ const PAGE_SUBS = {
   settings:   'Preferences & project config',
 };
 
-export default function TopBar({ page, serverStatus, latestAlert }) {
+export default function TopBar({ page, serverStatus, latestAlert, systemStatus }) {
+  const mon = systemStatus?.monitoring_enabled !== false;
+  const camStats = systemStatus?.cameras;
+  const city = systemStatus?.deployment_city;
+  const badge = systemStatus && serverStatus === 'online'
+    ? `${city ? `${city} · ` : ''}${mon ? 'MONITORING ON' : 'MONITORING OFF'} · ${camStats?.active ?? 0}/${camStats?.total ?? 0} CAMERAS`
+    : null;
   const ts = latestAlert?.timestamp
     ? new Date(latestAlert.timestamp * 1000).toLocaleTimeString()
     : null;
@@ -35,6 +41,14 @@ export default function TopBar({ page, serverStatus, latestAlert }) {
         <span className="topbar-sub">{PAGE_SUBS[page] || ''}</span>
       </div>
       <div className="topbar-right">
+        {badge && (
+          <div className="topbar-alert-chip" style={{ background: mon ? 'rgba(52,211,153,0.12)' : 'rgba(251,191,36,0.12)', color: mon ? 'var(--success)' : 'var(--warn)' }}>
+            <span>{badge}</span>
+            {systemStatus?.primary_camera?.name && (
+              <span className="chip-time"> · {systemStatus.primary_camera.name}</span>
+            )}
+          </div>
+        )}
         {latestAlert?.animal_detected ? (
           <div className="topbar-alert-chip danger">
             <AlertTriangle size={13}/>

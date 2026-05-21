@@ -47,7 +47,6 @@ except Exception as e:
     print(f"[WARN] Local MongoDB connection failed: {e}")
     print("[WARN] System will run with standard in-memory fallbacks.")
 
-
 def save_alert_to_db(alert_obj):
     if db_connected and db is not None:
         try:
@@ -70,6 +69,8 @@ latest_alert = {
     "animal_type": None,
     "confidence": 0.0,
     "location": "0.0,0.0",
+    "latitude": 0.0,
+    "longitude": 0.0,
     "timestamp": int(time.time()),
     "image": None,
 }
@@ -83,6 +84,133 @@ cameras = {
     "CAM_02":     "18.5250,73.8600",
     "CAM_03":     "18.5190,73.8500",
 }
+
+system_settings = {
+    "monitoring_enabled": True,
+    "active_detection_camera": "CAM_01",
+    "deployment_city": "Pune",
+}
+
+_settings_lock = threading.Lock()
+
+
+def _load_settings_from_db():
+    global system_settings
+    if db_connected and db is not None:
+        try:
+            doc = db["settings"].find_one({"_id": "system"})
+            if doc:
+                system_settings["monitoring_enabled"] = doc.get(
+                    "monitoring_enabled", True
+                )
+                system_settings["active_detection_camera"] = doc.get(
+                    "active_detection_camera", "CAM_01"
+                )
+                system_settings["deployment_city"] = doc.get(
+                    "deployment_city", "Pune"
+                )
+        except Exception as e:
+            print(f"[WARN] Could not load system settings: {e}")
+
+
+def _save_settings_to_db():
+    if db_connected and db is not None:
+        try:
+            db["settings"].update_one(
+                {"_id": "system"},
+                {"$set": {
+                    "monitoring_enabled": system_settings["monitoring_enabled"],
+                    "active_detection_camera": system_settings["active_detection_camera"],
+                    "deployment_city": system_settings.get("deployment_city", "Pune"),
+                }},
+                upsert=True,
+            )
+        except Exception as e:
+            print(f"[ERROR] Failed to save system settings: {e}")
+
+
+def _load_cameras_from_db():
+    if db_connected and db is not None:
+        try:
+            for cam in db["cameras"].find({}, {"id": 1, "location": 1}):
+                cameras[cam["id"]] = cam["location"]
+            print(f"[INFO] Loaded {len(cameras)} cameras from MongoDB.")
+        except Exception as e:
+            print(f"[WARN] Could not load cameras from MongoDB: {e}")
+
+
+_load_cameras_from_db()
+_load_settings_from_db()
+
+
+def _get_primary_camera_id():
+    with _settings_lock:
+        return system_settings.get("active_detection_camera", "CAM_01")
+
+
+def _get_detection_location():
+    cam_id = _get_primary_camera_id()
+    return cameras.get(cam_id, cameras.get("CAM_WEBCAM", "18.5204,73.8567"))
+
+
+def _parse_lat_lng(location_str):
+    try:
+        parts = location_str.split(",")
+        return float(parts[0].strip()), float(parts[1].strip())
+    except Exception:
+        return 18.5204, 73.8567
+
+
+def _get_deployment_city():
+    with _settings_lock:
+        return system_settings.get("deployment_city", "Pune")
+
+
+def _next_camera_number():
+    if db_connected and db is not None:
+        try:
+            nums = [
+                c.get("camera_number")
+                for c in db["cameras"].find({}, {"camera_number": 1})
+                if c.get("camera_number") is not None
+            ]
+            return max(nums, default=0) + 1
+        except Exception:
+            pass
+    return len(cameras) + 1
+
+
+def _enrich_cameras(cam_list):
+    """Add is_primary, camera_number, city — sorted by number for maps/apps."""
+    primary_id = _get_primary_camera_id()
+    city = _get_deployment_city()
+    working = [dict(c) for c in cam_list]
+    working.sort(key=lambda c: (
+        c.get("camera_number") if c.get("camera_number") is not None else 9999,
+        c.get("addedAt", 0),
+        c.get("id", ""),
+    ))
+    used = set()
+    for cam in working:
+        num = cam.get("camera_number")
+        if num is None or num in used:
+            num = 1
+            while num in used:
+                num += 1
+            cam["camera_number"] = num
+            if db_connected and db is not None:
+                try:
+                    db["cameras"].update_one(
+                        {"id": cam["id"]},
+                        {"$set": {"camera_number": num}},
+                    )
+                except Exception:
+                    pass
+        used.add(num)
+        cam["is_primary"] = cam.get("id") == primary_id
+        cam["city"] = city
+    working.sort(key=lambda c: c.get("camera_number", 0))
+    return working
 
 # ── Webcam capture thread ─────────────────────
 _latest_frame: Optional[np.ndarray] = None   # Fix: was np.ndarray | None (Python 3.10+ only)
@@ -126,12 +254,32 @@ def _auto_detect_loop():
     print("[INFO] Auto-detection loop started.")
     while True:
         time.sleep(2)
+        with _settings_lock:
+            monitoring_on = system_settings.get("monitoring_enabled", True)
+
+        cam_location = _get_detection_location()
+        lat_val, lng_val = _parse_lat_lng(cam_location)
+
+        if not monitoring_on:
+            new_alert = {
+                "animal_detected": False,
+                "animal_type": None,
+                "confidence": 0.0,
+                "location": cam_location,
+                "latitude": lat_val,
+                "longitude": lng_val,
+                "timestamp": int(time.time()),
+                "image": None,
+            }
+            with _alert_lock:
+                latest_alert = new_alert
+            continue
+
         frame = _get_latest_frame()
         if frame is None:
             continue
 
         detections = detector.detect(frame)
-        cam_location = cameras.get("CAM_WEBCAM", "0.0,0.0")
 
         if detections:
             best = max(detections, key=lambda d: d["confidence"])
@@ -144,6 +292,8 @@ def _auto_detect_loop():
                 "animal_type": best["class_name"],
                 "confidence": round(best["confidence"], 2),
                 "location": cam_location,
+                "latitude": lat_val,
+                "longitude": lng_val,
                 "timestamp": int(time.time()),
                 "image": image_b64,
             }
@@ -153,11 +303,12 @@ def _auto_detect_loop():
                 "animal_type": None,
                 "confidence": 0.0,
                 "location": cam_location,
+                "latitude": lat_val,
+                "longitude": lng_val,
                 "timestamp": int(time.time()),
                 "image": None,
             }
 
-        # Fix: use lock when writing shared state (race condition with /camera/detect)
         with _alert_lock:
             latest_alert = new_alert
 
@@ -248,13 +399,23 @@ def detect_from_camera():
             d["class_name"].lower() in detector.DANGEROUS_ANIMALS for d in detections
         )
 
+        cam_location = cameras[camera_id]
+        try:
+            lat_val = float(cam_location.split(",")[0])
+            lng_val = float(cam_location.split(",")[1])
+        except Exception:
+            lat_val = 0.0
+            lng_val = 0.0
+
         if detections:
             best = max(detections, key=lambda d: d["confidence"])
             new_alert = {
                 "animal_detected": True,
                 "animal_type": best["class_name"],
                 "confidence": round(best["confidence"], 2),
-                "location": cameras[camera_id],
+                "location": cam_location,
+                "latitude": lat_val,
+                "longitude": lng_val,
                 "timestamp": int(time.time()),
                 "image": image_b64,
             }
@@ -265,7 +426,9 @@ def detect_from_camera():
                 "animal_detected": False,
                 "animal_type": None,
                 "confidence": 0.0,
-                "location": cameras[camera_id],
+                "location": cam_location,
+                "latitude": lat_val,
+                "longitude": lng_val,
                 "timestamp": int(time.time()),
                 "image": None,
             }
@@ -412,18 +575,22 @@ def api_register():
                 "password": hashed_pw,   # stored as bcrypt hash, not plaintext
                 "created_at": int(time.time())
             })
+            token = base64.b64encode(f"{email}:{int(time.time())}".encode()).decode()
             return jsonify({
                 "status": "success",
                 "message": "User registered successfully",
-                "user": {"name": name, "email": email}
+                "token": token,
+                "user": {"name": name, "email": email.lower()}
             })
         except Exception as e:
             return jsonify({"status": "error", "message": f"Database error: {e}"}), 500
     else:
+        token = base64.b64encode(f"{email}:{int(time.time())}".encode()).decode()
         return jsonify({
             "status": "success",
             "message": "User registered (Mock Mode — no MongoDB)",
-            "user": {"name": name, "email": email}
+            "token": token,
+            "user": {"name": name, "email": email.lower()}
         })
 
 
@@ -441,8 +608,12 @@ def api_login():
             # Fix: look up by email only, then verify password with bcrypt
             user_doc = db["users"].find_one({"email": email.lower()})
             if user_doc and bcrypt.check_password_hash(user_doc["password"], password):
+                token = base64.b64encode(
+                    f"{user_doc['email']}:{int(time.time())}".encode()
+                ).decode()
                 return jsonify({
                     "status": "success",
+                    "token": token,
                     "user": {"name": user_doc["name"], "email": user_doc["email"]}
                 })
             else:
@@ -451,9 +622,11 @@ def api_login():
             return jsonify({"status": "error", "message": f"Database error: {e}"}), 500
     else:
         # Mock mode — no real user store, accept any credentials
+        token = base64.b64encode(f"{email}:{int(time.time())}".encode()).decode()
         return jsonify({
             "status": "success",
-            "user": {"name": "Demo User", "email": email}
+            "token": token,
+            "user": {"name": "Demo User", "email": email.lower()}
         })
 
 
@@ -492,20 +665,24 @@ def api_get_cameras():
             cursor = db["cameras"].find({}, {"_id": 0})
             cam_list = list(cursor)
             if not cam_list:
-                for cam_id, loc in cameras.items():
-                    name   = {"CAM_01": "North Perimeter", "CAM_02": "East Gate",
-                               "CAM_03": "South Boundary"}.get(cam_id, "Webcam (Dev)")
-                    c_type = "webcam" if cam_id == "CAM_WEBCAM" else "cctv"
-                    status = "offline" if cam_id == "CAM_02" else "active"
+                seed_order = [
+                    ("CAM_WEBCAM", "Webcam (Dev)", "webcam", "active", 1),
+                    ("CAM_01", "North Perimeter", "cctv", "active", 2),
+                    ("CAM_02", "East Gate", "cctv", "offline", 3),
+                    ("CAM_03", "South Boundary", "cctv", "active", 4),
+                ]
+                for cam_id, name, c_type, status, num in seed_order:
+                    loc = cameras.get(cam_id, "18.5204,73.8567")
                     db["cameras"].insert_one({
                         "id": cam_id, "location": loc, "name": name,
-                        "place": "Pune Office", "type": c_type, "status": status,
+                        "place": f"{_get_deployment_city()} Office", "type": c_type,
+                        "status": status, "camera_number": num,
                         "rtspUrl": "", "streamUrl": "", "notes": "",
                         "addedAt": int(time.time() * 1000)
                     })
                 cursor   = db["cameras"].find({}, {"_id": 0})
                 cam_list = list(cursor)
-            return jsonify(cam_list)
+            return jsonify(_enrich_cameras(cam_list))
         except Exception as e:
             return jsonify({"status": "error", "message": f"Database error: {e}"}), 500
     else:
@@ -527,7 +704,11 @@ def api_get_cameras():
            "rtspUrl": "", "streamUrl": "", "notes": "",
            "addedAt": int(time.time()*1000)},
         ]
-        return jsonify(mock_cams)
+        mock_cams[0]["camera_number"] = 1
+        mock_cams[1]["camera_number"] = 2
+        mock_cams[2]["camera_number"] = 3
+        mock_cams[3]["camera_number"] = 4
+        return jsonify(_enrich_cameras(mock_cams))
 
 
 @app.route("/api/cameras", methods=["POST"])
@@ -541,15 +722,17 @@ def api_add_camera():
 
     if db_connected and db is not None:
         try:
+            cam_num = data.get("camera_number") or _next_camera_number()
             new_cam = {
                 "id": cam_id, "location": location,
                 "name": data.get("name", cam_id),
-                "place": data.get("place", "Pune Office"),
+                "place": data.get("place", f"{_get_deployment_city()} Office"),
                 "type": data.get("type", "cctv"),
                 "status": data.get("status", "active"),
                 "rtspUrl": data.get("rtspUrl", ""),
                 "streamUrl": data.get("streamUrl", ""),
                 "notes": data.get("notes", ""),
+                "camera_number": int(cam_num),
                 "addedAt": int(time.time() * 1000)
             }
             db["cameras"].update_one({"id": cam_id}, {"$set": new_cam}, upsert=True)
@@ -560,6 +743,57 @@ def api_add_camera():
     else:
         cameras[cam_id] = location
         return jsonify({"status": "success", "message": "Camera added (Mock Mode)"})
+
+
+@app.route("/api/cameras/<id>", methods=["PUT"])
+def api_update_camera(id):
+    data = request.get_json(force=True)
+    if data.get("set_primary"):
+        with _settings_lock:
+            system_settings["active_detection_camera"] = id
+        _save_settings_to_db()
+        data = {k: v for k, v in data.items() if k != "set_primary"}
+
+    if db_connected and db is not None:
+        try:
+            data.pop("_id", None)
+            if data:
+                db["cameras"].update_one({"id": id}, {"$set": data})
+            if "location" in data:
+                cameras[id] = data["location"]
+            return jsonify({"status": "success"})
+        except Exception as e:
+            return jsonify({"status": "error", "message": f"Database error: {e}"}), 500
+    else:
+        if "location" in data:
+            cameras[id] = data["location"]
+        return jsonify({"status": "success", "message": "Updated (mock)"})
+
+
+@app.route("/api/cameras/<id>/control", methods=["POST"])
+def api_camera_control(id):
+    data = request.get_json(force=True) or {}
+    action = data.get("action")
+
+    if action not in ("start", "stop", "set_primary"):
+        return jsonify({"status": "error", "message": "Invalid action"}), 400
+
+    if action == "set_primary":
+        with _settings_lock:
+            system_settings["active_detection_camera"] = id
+        _save_settings_to_db()
+        if db_connected and db is not None:
+            db["cameras"].update_many({}, {"$set": {"is_primary": False}})
+        return jsonify({"status": "success", "message": f"{id} set as primary"})
+
+    new_status = "active" if action == "start" else "offline"
+    if db_connected and db is not None:
+        try:
+            db["cameras"].update_one({"id": id}, {"$set": {"status": new_status}})
+            return jsonify({"status": "success", "camera": {"id": id, "status": new_status}})
+        except Exception as e:
+            return jsonify({"status": "error", "message": f"Database error: {e}"}), 500
+    return jsonify({"status": "success", "camera": {"id": id, "status": new_status}})
 
 
 @app.route("/api/cameras/<id>", methods=["DELETE"])
@@ -591,6 +825,63 @@ def api_get_alerts():
             return jsonify({"status": "error", "message": f"Database error: {e}"}), 500
     else:
         return jsonify([])
+
+
+@app.route("/api/system/status", methods=["GET"])
+def api_system_status():
+    primary_id = _get_primary_camera_id()
+    primary_name = primary_id
+
+    total = active = offline = 0
+    if db_connected and db is not None:
+        try:
+            cam_list = list(db["cameras"].find({}, {"_id": 0, "id": 1, "name": 1, "status": 1}))
+            total = len(cam_list)
+            active = sum(1 for c in cam_list if c.get("status") == "active")
+            offline = total - active
+            for c in cam_list:
+                if c.get("id") == primary_id:
+                    primary_name = c.get("name", primary_id)
+        except Exception:
+            pass
+    else:
+        total = len(cameras)
+        active = total - 1
+        offline = 1
+
+    with _settings_lock:
+        monitoring = system_settings.get("monitoring_enabled", True)
+        active_cam = system_settings.get("active_detection_camera", "CAM_01")
+
+    with _alert_lock:
+        alert_snap = dict(latest_alert)
+
+    return jsonify({
+        "monitoring_enabled": monitoring,
+        "active_detection_camera": active_cam,
+        "deployment_city": _get_deployment_city(),
+        "primary_camera": {"id": primary_id, "name": primary_name},
+        "cameras": {"total": total, "active": active, "offline": offline},
+        "mongodb_connected": db_connected,
+        "latest_alert": alert_snap,
+    })
+
+
+@app.route("/api/system/settings", methods=["PUT"])
+def api_system_settings():
+    global system_settings
+    data = request.get_json(force=True) or {}
+
+    with _settings_lock:
+        if "monitoring_enabled" in data:
+            system_settings["monitoring_enabled"] = bool(data["monitoring_enabled"])
+        if "active_detection_camera" in data:
+            system_settings["active_detection_camera"] = data["active_detection_camera"]
+        if "deployment_city" in data and data["deployment_city"]:
+            system_settings["deployment_city"] = str(data["deployment_city"]).strip()
+
+    _save_settings_to_db()
+    return jsonify({"status": "success", "settings": dict(system_settings)})
 
 
 @app.route("/api/alerts", methods=["DELETE"])

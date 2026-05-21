@@ -183,6 +183,7 @@ function CameraDetectionCard({ cam, lastAlert, dangerLevel, isActive, layout }) 
         <div className="mv-list-icon" style={{background:hasAlert?glow:'var(--bg-card)',color}}>
           {hasAlert ? <AlertTriangle size={15}/> : isActive ? <CheckCircle size={15}/> : <WifiOff size={15}/>}
         </div>
+        {cam.camera_number != null && <span className="cam-number-badge" style={{minWidth:24,height:24,fontSize:11}}>#{cam.camera_number}</span>}
         <div className="mv-list-id mono">{cam.id}</div>
         <div className="mv-list-name">{cam.name || cam.id}</div>
         <div className="mv-list-loc">{cam.place || cam.location}</div>
@@ -202,6 +203,7 @@ function CameraDetectionCard({ cam, lastAlert, dangerLevel, isActive, layout }) 
     <div className="mv-cam-card" style={{borderColor:border,background:hasAlert?`linear-gradient(135deg, var(--bg-card) 0%, ${glow} 100%)`:'var(--bg-card)'}}>
       <div className="mv-card-header">
         <div style={{display:'flex',alignItems:'center',gap:7}}>
+          {cam.camera_number != null && <span className="cam-number-badge" style={{minWidth:22,height:22,fontSize:10}}>#{cam.camera_number}</span>}
           <div className="mv-cam-dot" style={{background:color,boxShadow:`0 0 6px ${color}`}}/>
           <span className="mono" style={{fontSize:11,color:'var(--text-muted)'}}>{cam.id}</span>
         </div>

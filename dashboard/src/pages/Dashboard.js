@@ -1,15 +1,21 @@
-import { Camera, AlertTriangle, CheckCircle, Activity, Clock, Eye } from 'lucide-react';
+import { Camera, AlertTriangle, CheckCircle, Activity, Clock, Eye, Play, Square, RefreshCw } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
 import { useMemo } from 'react';
 
 // Fix: accept serverBase from props so the live feed URL follows user-configured server address
-export default function Dashboard({ serverStatus, latestAlert, alertHistory, cameras, serverBase }) {
-  const activeCams = cameras.filter(c => c.status === 'active').length;
-  const offlineCams = cameras.filter(c => c.status === 'offline').length;
+export default function Dashboard({ serverStatus, latestAlert, alertHistory, cameras, serverBase, systemStatus, setMonitoring, refreshAll }) {
+  const activeCams = systemStatus?.cameras?.active ?? cameras.filter(c => c.status === 'active').length;
+  const totalCams = systemStatus?.cameras?.total ?? cameras.length;
+  const offlineCams = systemStatus?.cameras?.offline ?? cameras.filter(c => c.status === 'offline').length;
+  const monitoringOn = systemStatus?.monitoring_enabled !== false;
+  const primaryName = systemStatus?.primary_camera?.name || cameras.find(c => c.is_primary)?.name || '—';
   const todayAlerts = useMemo(() => {
     const today = new Date();
-    today.setHours(0,0,0,0);
-    return alertHistory.filter(a => new Date(a.id) >= today).length;
+    today.setHours(0, 0, 0, 0);
+    return alertHistory.filter(a => {
+      const ts = a.timestamp ? (a.timestamp > 1e12 ? a.timestamp : a.timestamp * 1000) : a.id;
+      return new Date(ts) >= today;
+    }).length;
   }, [alertHistory]);
 
   // Build hourly chart data from history
@@ -21,7 +27,8 @@ export default function Dashboard({ serverStatus, latestAlert, alertHistory, cam
       hours[h.getHours()] = { hour: `${String(h.getHours()).padStart(2,'0')}:00`, alerts: 0 };
     }
     alertHistory.forEach(a => {
-      const h = new Date(a.id).getHours();
+      const ts = a.timestamp ? (a.timestamp > 1e12 ? a.timestamp : a.timestamp * 1000) : a.id;
+      const h = new Date(ts).getHours();
       if (hours[h]) hours[h].alerts++;
     });
     return Object.values(hours);
@@ -40,6 +47,33 @@ export default function Dashboard({ serverStatus, latestAlert, alertHistory, cam
 
   return (
     <div className="dashboard">
+      {/* Operations controls */}
+      <div className="card" style={{marginBottom:16, display:'flex', alignItems:'center', justifyContent:'space-between', flexWrap:'wrap', gap:12}}>
+        <div>
+          <div style={{fontSize:11, color:'var(--text-muted)', marginBottom:4}}>Operations</div>
+          <div style={{fontSize:15, fontWeight:700, color: monitoringOn ? 'var(--success)' : 'var(--warn)'}}>
+            {monitoringOn ? 'MONITORING ON' : 'MONITORING PAUSED'}
+            <span style={{fontWeight:400, color:'var(--text-secondary)', fontSize:12, marginLeft:10}}>
+              · {activeCams}/{totalCams} cameras · {primaryName}
+            </span>
+          </div>
+        </div>
+        <div style={{display:'flex', gap:8}}>
+          {monitoringOn ? (
+            <button className="btn btn-sm btn-danger" onClick={() => setMonitoring(false)} disabled={serverStatus !== 'online'}>
+              <Square size={13}/> Stop All Monitoring
+            </button>
+          ) : (
+            <button className="btn btn-sm btn-primary" onClick={() => setMonitoring(true)} disabled={serverStatus !== 'online'}>
+              <Play size={13}/> Start Monitoring
+            </button>
+          )}
+          <button className="btn btn-sm" onClick={refreshAll} disabled={serverStatus !== 'online'}>
+            <RefreshCw size={13}/> Refresh
+          </button>
+        </div>
+      </div>
+
       {/* Stat row */}
       <div className="stats-grid">
         <StatCard
@@ -226,7 +260,7 @@ export default function Dashboard({ serverStatus, latestAlert, alertHistory, cam
                     <td className="primary">{a.animal_type}</td>
                     <td><ConfidenceBadge conf={a.confidence} /></td>
                     <td className="mono" style={{fontSize:11}}>{a.location}</td>
-                    <td>{new Date(a.id).toLocaleTimeString()}</td>
+                    <td>{new Date(a.timestamp ? (a.timestamp > 1e12 ? a.timestamp : a.timestamp * 1000) : a.id).toLocaleTimeString()}</td>
                   </tr>
                 ))}
               </tbody>

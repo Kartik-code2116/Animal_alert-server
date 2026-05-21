@@ -1,9 +1,28 @@
-import { useState } from 'react';
-import { Plus, Trash2, Edit3, CheckCircle, WifiOff, Camera, X, Save, Link, MapPin, Info } from 'lucide-react';
+import { useState, useRef, useCallback, Component } from 'react';
+import { Plus, Trash2, Edit3, CheckCircle, WifiOff, Camera, X, Save, Link, Info, Star, Play, Square, MapPin } from 'lucide-react';
+import { CameraLocationMap, AllCamerasMap } from '../components/CameraLocationMap';
 
 const CAM_TYPES = ['webcam', 'cctv', 'ip_camera', 'rtsp', 'usb'];
 
-export default function Cameras({ cameras, addCamera, removeCamera, updateCamera, serverStatus }) {
+class CamerasMapBoundary extends Component {
+  state = { crashed: false };
+  static getDerivedStateFromError() {
+    return { crashed: true };
+  }
+  render() {
+    if (this.state.crashed) {
+      return (
+        <div className="notice-banner warn" style={{ marginBottom: 12 }}>
+          City map could not load — camera list below still works. Rebuild the dashboard after updating code.
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+export default function Cameras({ cameras, addCamera, removeCamera, updateCamera, cameraControl, serverStatus, systemStatus }) {
+  const deploymentCity = systemStatus?.deployment_city || cameras[0]?.city || 'Pune';
   const [showAdd, setShowAdd] = useState(false);
   const [editId, setEditId] = useState(null);
   const [form, setForm] = useState({
@@ -23,7 +42,23 @@ export default function Cameras({ cameras, addCamera, removeCamera, updateCamera
   };
 
   const startEdit = (cam) => { setEditId(cam.id); setEditForm({ ...cam }); };
-  const saveEdit = () => { updateCamera(editId, editForm); setEditId(null); };
+
+  const saveEdit = () => {
+    updateCamera(editId, editForm);
+    setEditId(null);
+  };
+
+  const locationSaveTimer = useRef(null);
+
+  const saveLocationLive = useCallback((cameraId, newLocation) => {
+    setEditForm((p) => ({ ...p, location: newLocation }));
+    if (locationSaveTimer.current) clearTimeout(locationSaveTimer.current);
+    locationSaveTimer.current = setTimeout(() => {
+      if (serverStatus === 'online') {
+        updateCamera(cameraId, { location: newLocation });
+      }
+    }, 450);
+  }, [serverStatus, updateCamera]);
 
   const activeCams = cameras.filter(c => c.status === 'active').length;
   const offlineCams = cameras.filter(c => c.status !== 'active').length;
@@ -66,16 +101,38 @@ export default function Cameras({ cameras, addCamera, removeCamera, updateCamera
         </div>
       )}
 
+      {serverStatus === 'online' && cameras.length > 0 && (
+        <CamerasMapBoundary>
+          <AllCamerasMap
+            cameras={cameras}
+            city={deploymentCity}
+            selectedId={editId}
+            onSelectCamera={(cam) => startEdit(cam)}
+            height={300}
+          />
+        </CamerasMapBoundary>
+      )}
+
       {/* Camera grid */}
       <div className="cameras-grid">
         {filtered.map(cam => (
           editId === cam.id
-            ? <CameraEditCard key={cam.id} form={editForm} setForm={setEditForm} onSave={saveEdit} onCancel={() => setEditId(null)} />
+            ? <CameraEditCard
+                key={cam.id}
+                form={editForm}
+                setForm={setEditForm}
+                onSave={saveEdit}
+                onCancel={() => setEditId(null)}
+                onLocationLiveSave={(loc) => saveLocationLive(cam.id, loc)}
+                serverOnline={serverStatus === 'online'}
+              />
             : <CameraCard
                 key={cam.id} cam={cam}
                 onEdit={() => startEdit(cam)}
                 onRemove={() => removeCamera(cam.id)}
-                onToggle={() => updateCamera(cam.id, { status: cam.status==='active' ? 'offline' : 'active' })}
+                onStart={() => cameraControl(cam.id, 'start')}
+                onStop={() => cameraControl(cam.id, 'stop')}
+                onSetPrimary={() => cameraControl(cam.id, 'set_primary')}
               />
         ))}
         {filtered.length === 0 && (
@@ -108,10 +165,24 @@ export default function Cameras({ cameras, addCamera, removeCamera, updateCamera
             </div>
 
             <div className="form-group">
+              <label className="form-label">Camera number <span style={{color:'var(--text-muted)',fontWeight:400,fontSize:10}}>(shown on map in {deploymentCity})</span></label>
+              <input className="form-input" type="number" min={1} placeholder="Auto if empty"
+                value={form.camera_number ?? ''}
+                onChange={e => setForm(f=>({...f, camera_number: e.target.value ? Number(e.target.value) : undefined}))} />
+            </div>
+
+            <div className="form-group">
               <label className="form-label">GPS Coordinates * <span style={{color:'var(--text-muted)',fontWeight:400,fontSize:10}}>(lat,lng)</span></label>
               <input className="form-input mono" placeholder="18.5204,73.8567" value={form.location}
                 onChange={e => setForm(f=>({...f,location:e.target.value}))} />
             </div>
+
+            <CameraLocationMap
+              location={form.location || '18.5204,73.8567'}
+              camera={{ ...form, city: deploymentCity, camera_number: form.camera_number }}
+              onLocationChange={(loc) => setForm((f) => ({ ...f, location: loc }))}
+              height={220}
+            />
 
             <div className="form-group">
               <label className="form-label">Physical Location / Description</label>
@@ -182,24 +253,35 @@ function CamStat({ label, value, color }) {
   );
 }
 
-function CameraCard({ cam, onEdit, onRemove, onToggle }) {
+function CameraCard({ cam, onEdit, onRemove, onStart, onStop, onSetPrimary }) {
   const [expanded, setExpanded] = useState(false);
   const isActive = cam.status === 'active';
+  const isPrimary = cam.is_primary;
   return (
-    <div className={`camera-card ${isActive ? '' : 'offline'}`}>
+    <div className={`camera-card ${isActive ? '' : 'offline'} ${isPrimary ? 'primary-cam' : ''}`}
+      style={isPrimary ? { boxShadow: '0 0 0 2px rgba(251,191,36,0.5)' } : {}}>
       <div className="camera-card-header">
+        {cam.camera_number != null && (
+          <span className="cam-number-badge">#{cam.camera_number}</span>
+        )}
         <div className="camera-icon-wrap">
           <Camera size={18}/>
         </div>
         <div className="camera-card-id mono">{cam.id}</div>
+        {isPrimary && <span className="pill" style={{background:'rgba(251,191,36,0.2)',color:'#fbbf24',fontSize:10}}>PRIMARY</span>}
         <span className={`pill ${isActive ? 'pill-online' : 'pill-offline'}`}>
           <span className={`pill-dot ${isActive ? 'pulse' : ''}`}/>{cam.status}
         </span>
       </div>
 
-      <div className="camera-card-name">{cam.name || cam.id}</div>
+      <div className="camera-card-name">
+        {cam.camera_number != null && <span style={{color:'var(--accent)',marginRight:6}}>#{cam.camera_number}</span>}
+        {cam.name || cam.id}
+        {cam.city && <span style={{fontSize:10,color:'var(--text-muted)',marginLeft:6}}>{cam.city}</span>}
+      </div>
 
       <div className="camera-card-rows">
+        <CRow label="Map #" value={cam.camera_number != null ? `Camera ${cam.camera_number}` : '—'} />
         <CRow label="Type" value={cam.type?.toUpperCase()} />
         <CRow label="GPS" value={cam.location} mono />
         <CRow label="Location" value={cam.place || '—'} />
@@ -224,11 +306,17 @@ function CameraCard({ cam, onEdit, onRemove, onToggle }) {
         <div className="cam-notes-text">{cam.notes}</div>
       )}
 
-      <div className="camera-card-actions">
-        <button className="btn btn-sm" onClick={onToggle}>
-          {isActive ? <WifiOff size={13}/> : <CheckCircle size={13}/>}
-          {isActive ? 'Mark Offline' : 'Mark Active'}
-        </button>
+      <div className="camera-card-actions" style={{flexWrap:'wrap'}}>
+        {isActive ? (
+          <button className="btn btn-sm" onClick={onStop}><Square size={12}/> Stop</button>
+        ) : (
+          <button className="btn btn-sm" onClick={onStart}><Play size={12}/> Start</button>
+        )}
+        {!isPrimary && (
+          <button className="btn btn-sm" onClick={onSetPrimary} title="Use this camera GPS for new alerts">
+            <Star size={12}/> Set Primary
+          </button>
+        )}
         <button className="btn btn-sm" onClick={onEdit}><Edit3 size={13}/> Edit</button>
         <button className="btn btn-sm btn-danger" onClick={onRemove}><Trash2 size={13}/></button>
       </div>
@@ -236,15 +324,34 @@ function CameraCard({ cam, onEdit, onRemove, onToggle }) {
   );
 }
 
-function CameraEditCard({ form, setForm, onSave, onCancel }) {
+function CameraEditCard({ form, setForm, onSave, onCancel, onLocationLiveSave, serverOnline }) {
   return (
     <div className="camera-card editing" style={{gridColumn:'span 1'}}>
       <div className="section-header" style={{marginBottom:12}}>
         <span style={{fontWeight:700,fontSize:13,color:'var(--accent)'}}>Editing {form.id}</span>
+        {serverOnline && (
+          <span className="pill pill-online" style={{fontSize:10}}>
+            <MapPin size={10}/> Live sync to Android
+          </span>
+        )}
       </div>
+      <div className="form-group" style={{marginBottom:8}}>
+        <label className="form-label">Display Name</label>
+        <input className="form-input" placeholder="Camera name" value={form.name||''}
+          onChange={e=>setForm(p=>({...p,name:e.target.value}))}/>
+      </div>
+      <div className="form-group" style={{marginBottom:8}}>
+        <label className="form-label">GPS Coordinates (lat,lng)</label>
+        <input className="form-input mono" placeholder="18.5204,73.8567" value={form.location||''}
+          onChange={e => onLocationLiveSave(e.target.value)}/>
+      </div>
+      <CameraLocationMap
+        location={form.location || '18.5204,73.8567'}
+        camera={form}
+        onLocationChange={onLocationLiveSave}
+        height={200}
+      />
       {[
-        {label:'Display Name', key:'name', placeholder:'Camera name'},
-        {label:'GPS Coordinates', key:'location', placeholder:'18.5204,73.8567', mono:true},
         {label:'Physical Location', key:'place', placeholder:'Gate, section, height'},
         {label:'RTSP URL', key:'rtspUrl', placeholder:'rtsp://admin:pass@IP:554/stream', mono:true},
         {label:'HTTP Stream URL', key:'streamUrl', placeholder:'http://IP/stream.mjpg', mono:true},

@@ -41,6 +41,15 @@ const STEPS = [
   },
   {
     num: '05',
+    title: 'Map shows camera numbers',
+    desc: 'Cameras from the website use camera_number (1, 2, 3…) and city from the server. Map markers should show the same numbers as the admin map.',
+    code: 'GET /api/cameras\n// Example camera:\n{"id":"CAM_01","camera_number":2,"city":"Pune","name":"North Gate",...}',
+    tip: 'In MapFragment.kt use marker.title = "#${cam.camera_number} ${cam.name}"',
+    icon: <Globe size={20} />,
+    color: 'var(--warn)',
+  },
+  {
+    num: '06',
     title: 'Verify Live Alerts',
     desc: 'Go to the Alert System screen in the app. You should see "Service Running" with a green dot.',
     code: '// The app polls this endpoint every 3 seconds:\nGET http://YOUR_PC_IP:5000/latest-alert\n\n// Returns:\n{"animal_detected": false, "animal_type": null,\n "confidence": 0.0, "location": "...", "timestamp": ...}',
@@ -51,6 +60,8 @@ const STEPS = [
 ];
 
 const API_ENDPOINTS = [
+  { method: 'GET',  path: '/api/cameras',     desc: 'Each camera has camera_number (1,2,3…), city, is_primary — show # on map', used: 'MapFragment polls every 30s' },
+  { method: 'GET',  path: '/api/system/status', desc: 'deployment_city + camera counts for dashboard badge', used: 'DashboardFragment' },
   { method: 'GET',  path: '/health',          desc: 'Health check — returns {"status":"healthy"}', used: 'App startup check' },
   { method: 'GET',  path: '/latest-alert',    desc: 'Latest detection state',                       used: 'Polled every 3s by AlertService' },
   { method: 'POST', path: '/register/camera', desc: 'Register a camera with GPS coords',            used: 'Camera Management → Add Camera' },

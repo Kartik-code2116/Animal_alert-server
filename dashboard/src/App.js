@@ -13,18 +13,23 @@ import './App.css';
 import './pages/pages.css';
 
 const DEFAULT_CAMERAS = [
-  { id: 'CAM_WEBCAM', name: 'Webcam (Dev)', location: '18.5204,73.8567', place: 'Pune Office', type: 'webcam', status: 'active', rtspUrl: '', streamUrl: '', notes: 'Laptop webcam — development/testing camera', addedAt: Date.now() - 86400000 * 3 },
-  { id: 'CAM_01', name: 'North Perimeter', location: '18.5204,73.8567', place: 'Pune Office — North Gate', type: 'cctv', status: 'active', rtspUrl: '', streamUrl: '', notes: '', addedAt: Date.now() - 86400000 * 2 },
-  { id: 'CAM_02', name: 'East Gate', location: '18.5250,73.8600', place: 'East Entrance', type: 'cctv', status: 'offline', rtspUrl: '', streamUrl: '', notes: '', addedAt: Date.now() - 86400000 },
-  { id: 'CAM_03', name: 'South Boundary', location: '18.5190,73.8500', place: 'South Sensors', type: 'cctv', status: 'active', rtspUrl: '', streamUrl: '', notes: '', addedAt: Date.now() },
+  { id: 'CAM_WEBCAM', name: 'Webcam (Dev)', location: '18.5204,73.8567', place: 'Pune Office', type: 'webcam', status: 'active', rtspUrl: '', streamUrl: '', notes: 'Laptop webcam', addedAt: Date.now() - 86400000 * 3, is_primary: false },
+  { id: 'CAM_01', name: 'North Perimeter', location: '18.5204,73.8567', place: 'Pune Office — North Gate', type: 'cctv', status: 'active', rtspUrl: '', streamUrl: '', notes: '', addedAt: Date.now() - 86400000 * 2, is_primary: true },
+  { id: 'CAM_02', name: 'East Gate', location: '18.5250,73.8600', place: 'East Entrance', type: 'cctv', status: 'offline', rtspUrl: '', streamUrl: '', notes: '', addedAt: Date.now() - 86400000, is_primary: false },
+  { id: 'CAM_03', name: 'South Boundary', location: '18.5190,73.8500', place: 'South Sensors', type: 'cctv', status: 'active', rtspUrl: '', streamUrl: '', notes: '', addedAt: Date.now(), is_primary: false },
 ];
+
+function alertId(a, index) {
+  const ts = a.timestamp > 1e12 ? a.timestamp : (a.timestamp || 0) * 1000;
+  return a._id || `${ts}-${a.animal_type || 'none'}-${index}`;
+}
 
 export default function App() {
   const [page, setPage] = useState('dashboard');
   const [serverStatus, setServerStatus] = useState('unknown');
   const [latestAlert, setLatestAlert] = useState(null);
+  const [systemStatus, setSystemStatus] = useState(null);
 
-  // Fix: persist alertHistory to localStorage so it survives page reload
   const [alertHistory, setAlertHistory] = useState(() => {
     try {
       const saved = localStorage.getItem('wt_alertHistory');
@@ -52,54 +57,70 @@ export default function App() {
     }
   });
 
-  // Fix: derive serverBase from serverConfig so changing host/port actually takes effect
   const serverBase = `http://${serverConfig.host}:${serverConfig.port}`;
-
   const alertHistoryRef = useRef(alertHistory);
   alertHistoryRef.current = alertHistory;
 
-  // Persist state to localStorage
   useEffect(() => {
-    try {
-      localStorage.setItem('wt_cameras', JSON.stringify(cameras));
-    } catch (e) {
-      console.warn('Failed to save cameras to localStorage:', e);
-    }
+    try { localStorage.setItem('wt_cameras', JSON.stringify(cameras)); } catch { /* */ }
   }, [cameras]);
 
   useEffect(() => {
-    try {
-      localStorage.setItem('wt_serverconfig', JSON.stringify(serverConfig));
-    } catch (e) {
-      console.warn('Failed to save server config to localStorage:', e);
-    }
+    try { localStorage.setItem('wt_serverconfig', JSON.stringify(serverConfig)); } catch { /* */ }
   }, [serverConfig]);
 
-  // Fix: persist alertHistory and prevent QuotaExceededError by keeping metadata but removing image data for older items
   useEffect(() => {
     try {
-      // Keep the full state in memory/React, but save a pruned version to localStorage.
-      // We strip the heavy base64 image strings from alerts older than the most recent 10.
-      const prunedHistory = alertHistory.map((alert, index) => {
-        if (index >= 10 && alert.image) {
-          const { image, ...rest } = alert;
-          return rest;
-        }
-        return alert;
-      });
-      localStorage.setItem('wt_alertHistory', JSON.stringify(prunedHistory));
-    } catch (e) {
-      console.warn('Failed to save alert history to localStorage:', e);
-    }
+      const pruned = alertHistory.map((a, i) => (i >= 10 && a.image ? (({ image, ...r }) => r)(a) : a));
+      localStorage.setItem('wt_alertHistory', JSON.stringify(pruned));
+    } catch { /* */ }
   }, [alertHistory]);
 
-  // Health check — re-runs when serverConfig.host or serverConfig.port changes
+  const syncCamerasFromServer = useCallback(async () => {
+    try {
+      const r = await fetch(`${serverBase}/api/cameras`, { signal: AbortSignal.timeout(4000) });
+      if (!r.ok) return;
+      const list = await r.json();
+      if (Array.isArray(list) && list.length) setCameras(list);
+    } catch { /* */ }
+  }, [serverBase]);
+
+  const syncAlertsFromServer = useCallback(async () => {
+    try {
+      const r = await fetch(`${serverBase}/api/alerts`, { signal: AbortSignal.timeout(5000) });
+      if (!r.ok) return;
+      const list = await r.json();
+      if (!Array.isArray(list)) return;
+      const mapped = list.map((a, i) => ({
+        ...a,
+        id: alertId(a, i),
+        timestamp: a.timestamp > 1e12 ? Math.floor(a.timestamp / 1000) : a.timestamp,
+      }));
+      setAlertHistory(mapped);
+    } catch { /* */ }
+  }, [serverBase]);
+
+  const syncSystemStatus = useCallback(async () => {
+    try {
+      const r = await fetch(`${serverBase}/api/system/status`, { signal: AbortSignal.timeout(3000) });
+      if (!r.ok) return;
+      const d = await r.json();
+      setSystemStatus(d);
+    } catch { /* */ }
+  }, [serverBase]);
+
   useEffect(() => {
     const check = async () => {
       try {
         const r = await fetch(`${serverBase}/health`, { signal: AbortSignal.timeout(2000) });
         const d = await r.json();
-        setServerStatus(d.status === 'healthy' ? 'online' : 'offline');
+        const online = d.status === 'healthy';
+        setServerStatus(online ? 'online' : 'offline');
+        if (online) {
+          syncCamerasFromServer();
+          syncAlertsFromServer();
+          syncSystemStatus();
+        }
       } catch {
         setServerStatus('offline');
       }
@@ -107,10 +128,8 @@ export default function App() {
     check();
     const t = setInterval(check, 5000);
     return () => clearInterval(t);
-  // Fix: depend on serverBase so health check updates when user changes server address
-  }, [serverBase]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [serverBase, syncCamerasFromServer, syncAlertsFromServer, syncSystemStatus]);
 
-  // Poll latest alert
   useEffect(() => {
     if (serverStatus !== 'online') return;
     const poll = async () => {
@@ -120,80 +139,191 @@ export default function App() {
         setLatestAlert(d);
         if (d.animal_detected) {
           const hist = alertHistoryRef.current;
-          const isDup =
-            hist.length > 0 &&
+          const ts = d.timestamp > 1e12 ? Math.floor(d.timestamp / 1000) : d.timestamp;
+          const isDup = hist.length > 0 &&
             hist[0].animal_type === d.animal_type &&
-            Math.abs(hist[0].timestamp - d.timestamp) < 5;
+            Math.abs((hist[0].timestamp || 0) - (ts || 0)) < 5;
           if (!isDup) {
-            setAlertHistory(prev => [{ ...d, id: Date.now() }, ...prev.slice(0, 99)]);
+            setAlertHistory(prev => [{ ...d, id: Date.now(), timestamp: ts }, ...prev.slice(0, 99)]);
           }
         }
-      } catch { /* server temporarily unreachable */ }
+      } catch { /* */ }
     };
     poll();
     const t = setInterval(poll, (serverConfig.pollInterval || 3) * 1000);
     return () => clearInterval(t);
-  // Fix: depend on serverBase so poll target updates when user changes server address
-  }, [serverStatus, serverBase, serverConfig.pollInterval]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [serverStatus, serverBase, serverConfig.pollInterval]);
+
+  useEffect(() => {
+    if (serverStatus !== 'online') return;
+    const t = setInterval(syncSystemStatus, 8000);
+    return () => clearInterval(t);
+  }, [serverStatus, syncSystemStatus]);
 
   const addCamera = useCallback(async (cam) => {
-    setCameras(prev => [...prev, { ...cam, addedAt: Date.now() }]);
+    const payload = { ...cam, id: cam.id, location: cam.location };
     if (serverStatus === 'online') {
       try {
-        await fetch(`${serverBase}/register/camera`, {
+        const r = await fetch(`${serverBase}/api/cameras`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ camera_id: cam.id, location: cam.location }),
+          body: JSON.stringify(payload),
         });
-      } catch { /* non-blocking */ }
+        if (r.ok) {
+          await syncCamerasFromServer();
+          return;
+        }
+      } catch { /* */ }
     }
-  }, [serverStatus, serverBase]);
+    setCameras(prev => [...prev, { ...cam, addedAt: Date.now() }]);
+  }, [serverStatus, serverBase, syncCamerasFromServer]);
 
-  const removeCamera = useCallback((id) => {
+  const removeCamera = useCallback(async (id) => {
+    if (serverStatus === 'online') {
+      try {
+        await fetch(`${serverBase}/api/cameras/${id}`, { method: 'DELETE' });
+        await syncCamerasFromServer();
+        return;
+      } catch { /* */ }
+    }
     setCameras(prev => prev.filter(c => c.id !== id));
-  }, []);
+  }, [serverStatus, serverBase, syncCamerasFromServer]);
 
-  const updateCamera = useCallback((id, updates) => {
+  const updateCamera = useCallback(async (id, updates) => {
+    if (serverStatus === 'online') {
+      try {
+        await fetch(`${serverBase}/api/cameras/${id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(updates),
+        });
+        await syncCamerasFromServer();
+        return;
+      } catch { /* */ }
+    }
     setCameras(prev => prev.map(c => c.id === id ? { ...c, ...updates } : c));
-  }, []);
+  }, [serverStatus, serverBase, syncCamerasFromServer]);
 
-  // Fix: also clear localStorage when clearing alerts
-  const clearAlerts = useCallback(() => {
+  const cameraControl = useCallback(async (id, action) => {
+    if (serverStatus === 'online') {
+      try {
+        await fetch(`${serverBase}/api/cameras/${id}/control`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action }),
+        });
+        await syncCamerasFromServer();
+        if (action === 'set_primary') await syncSystemStatus();
+        return;
+      } catch { /* */ }
+    }
+    if (action === 'start') updateCamera(id, { status: 'active' });
+    else if (action === 'stop') updateCamera(id, { status: 'offline' });
+    else if (action === 'set_primary') {
+      setCameras(prev => prev.map(c => ({ ...c, is_primary: c.id === id })));
+    }
+  }, [serverStatus, serverBase, syncCamerasFromServer, syncSystemStatus, updateCamera]);
+
+  const setMonitoring = useCallback(async (enabled) => {
+    if (serverStatus === 'online') {
+      try {
+        await fetch(`${serverBase}/api/system/settings`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ monitoring_enabled: enabled }),
+        });
+        await syncSystemStatus();
+      } catch { /* */ }
+    } else {
+      setSystemStatus(prev => ({ ...prev, monitoring_enabled: enabled }));
+    }
+  }, [serverStatus, serverBase, syncSystemStatus]);
+
+  const setDeploymentCity = useCallback(async (cityName) => {
+    if (!cityName?.trim()) return;
+    if (serverStatus === 'online') {
+      try {
+        await fetch(`${serverBase}/api/system/settings`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ deployment_city: cityName.trim() }),
+        });
+        await syncCamerasFromServer();
+        await syncSystemStatus();
+      } catch { /* */ }
+    } else {
+      setSystemStatus((prev) => ({ ...prev, deployment_city: cityName.trim() }));
+    }
+  }, [serverStatus, serverBase, syncCamerasFromServer, syncSystemStatus]);
+
+  const setPrimaryCamera = useCallback(async (cameraId) => {
+    if (serverStatus === 'online') {
+      try {
+        await fetch(`${serverBase}/api/system/settings`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ active_detection_camera: cameraId }),
+        });
+        await syncCamerasFromServer();
+        await syncSystemStatus();
+      } catch { /* */ }
+    }
+  }, [serverStatus, serverBase, syncCamerasFromServer, syncSystemStatus]);
+
+  const clearAlerts = useCallback(async () => {
+    if (serverStatus === 'online') {
+      try {
+        await fetch(`${serverBase}/api/alerts`, { method: 'DELETE' });
+      } catch { /* */ }
+    }
     setAlertHistory([]);
     localStorage.removeItem('wt_alertHistory');
-  }, []);
+  }, [serverStatus, serverBase]);
+
+  const refreshAll = useCallback(async () => {
+    await syncCamerasFromServer();
+    await syncAlertsFromServer();
+    await syncSystemStatus();
+  }, [syncCamerasFromServer, syncAlertsFromServer, syncSystemStatus]);
 
   const props = {
     serverStatus,
     latestAlert,
     alertHistory,
     cameras,
+    systemStatus,
     serverConfig,
     setServerConfig,
     addCamera,
     removeCamera,
     updateCamera,
+    cameraControl,
+    setMonitoring,
+    setDeploymentCity,
+    setPrimaryCamera,
     clearAlerts,
-    serverBase,   // Fix: passes the dynamic serverBase, not the old hardcoded SERVER_BASE constant
+    refreshAll,
+    syncAlertsFromServer,
+    serverBase,
   };
 
   const pages = {
     dashboard: Dashboard,
     multiview: MultiView,
-    cameras:   Cameras,
-    alerts:    Alerts,
+    cameras: Cameras,
+    alerts: Alerts,
     cctvsetup: CctvSetup,
-    android:   AndroidGuide,
-    server:    ServerConfig,
-    settings:  Settings,
+    android: AndroidGuide,
+    server: ServerConfig,
+    settings: Settings,
   };
   const PageComponent = pages[page] || Dashboard;
 
   return (
     <div className="app-shell">
-      <Sidebar page={page} setPage={setPage} serverStatus={serverStatus} cameras={cameras} />
+      <Sidebar page={page} setPage={setPage} serverStatus={serverStatus} cameras={cameras} systemStatus={systemStatus} />
       <div className="main-area">
-        <TopBar page={page} serverStatus={serverStatus} latestAlert={latestAlert} />
+        <TopBar page={page} serverStatus={serverStatus} latestAlert={latestAlert} systemStatus={systemStatus} />
         <main className="page-content">
           <PageComponent {...props} />
         </main>

@@ -1,7 +1,7 @@
 import { useState, useMemo } from 'react';
-import { Trash2, AlertTriangle, CheckCircle, Download, Filter } from 'lucide-react';
+import { Trash2, AlertTriangle, CheckCircle, Download, Filter, RefreshCw } from 'lucide-react';
 
-export default function Alerts({ alertHistory, clearAlerts }) {
+export default function Alerts({ alertHistory, clearAlerts, syncAlertsFromServer, serverStatus }) {
   const [filter, setFilter] = useState('');
   const [sortBy, setSortBy] = useState('newest');
 
@@ -46,8 +46,11 @@ export default function Alerts({ alertHistory, clearAlerts }) {
         <button className="btn btn-sm" onClick={exportCSV} disabled={alertHistory.length===0}>
           <Download size={13}/> Export CSV
         </button>
+        <button className="btn btn-sm" onClick={syncAlertsFromServer} disabled={serverStatus !== 'online'}>
+          <RefreshCw size={13}/> Sync from Server
+        </button>
         <button className="btn btn-sm btn-danger" onClick={clearAlerts} disabled={alertHistory.length===0}>
-          <Trash2 size={13}/> Clear All
+          <Trash2 size={13}/> Clear All (MongoDB)
         </button>
       </div>
 
@@ -73,9 +76,15 @@ export default function Alerts({ alertHistory, clearAlerts }) {
   );
 }
 
+function alertTime(a) {
+  const ts = a.timestamp ? (a.timestamp > 1e12 ? a.timestamp : a.timestamp * 1000) : (a.id || Date.now());
+  return new Date(ts);
+}
+
 function AlertRow({ alert: a }) {
   const [expanded, setExpanded] = useState(false);
   const high = a.confidence >= 75;
+  const when = alertTime(a);
   return (
     <div className={`alert-row-card ${high ? 'high' : ''}`} onClick={() => setExpanded(e=>!e)}>
       <div className="alert-row-main">
@@ -88,15 +97,15 @@ function AlertRow({ alert: a }) {
         </div>
         <div className="alert-row-right">
           <span className={`alert-conf ${high ? 'high' : ''}`}>{a.confidence}%</span>
-          <span className="alert-time">{new Date(a.id).toLocaleTimeString()}</span>
-          <span className="alert-date">{new Date(a.id).toLocaleDateString()}</span>
+          <span className="alert-time">{when.toLocaleTimeString()}</span>
+          <span className="alert-date">{when.toLocaleDateString()}</span>
         </div>
       </div>
       {expanded && a.image && (
         <div className="alert-row-expand">
           <img src={`data:image/jpeg;base64,${a.image}`} alt="Detection frame" className="alert-thumb" />
           <div className="alert-meta">
-            <MetaRow label="Full timestamp" value={new Date(a.id).toISOString()} />
+            <MetaRow label="Full timestamp" value={when.toISOString()} />
             <MetaRow label="Confidence" value={`${a.confidence}%`} />
             <MetaRow label="GPS" value={a.location} />
           </div>
