@@ -1,4 +1,5 @@
 import { AlertTriangle, CheckCircle, RefreshCw } from 'lucide-react';
+import { isDangerousDetection } from '../utils/detection';
 import './TopBar.css';
 
 const PAGE_TITLES = {
@@ -23,7 +24,7 @@ const PAGE_SUBS = {
   settings:   'Preferences & project config',
 };
 
-export default function TopBar({ page, serverStatus, latestAlert, systemStatus }) {
+export default function TopBar({ page, serverStatus, latestAlert, systemStatus, personalPrimary, effectivePrimary, cameras }) {
   const mon = systemStatus?.monitoring_enabled !== false;
   const camStats = systemStatus?.cameras;
   const city = systemStatus?.deployment_city;
@@ -33,6 +34,11 @@ export default function TopBar({ page, serverStatus, latestAlert, systemStatus }
   const ts = latestAlert?.timestamp
     ? new Date(latestAlert.timestamp * 1000).toLocaleTimeString()
     : null;
+  const isDangerous = isDangerousDetection(latestAlert);
+
+  const focusedCam = cameras?.find(c => c.id === effectivePrimary);
+  const focusName = focusedCam ? focusedCam.name : (systemStatus?.primary_camera?.name || 'No camera');
+  const isPersonal = personalPrimary && focusedCam && personalPrimary === focusedCam.id;
 
   return (
     <header className="topbar">
@@ -44,12 +50,17 @@ export default function TopBar({ page, serverStatus, latestAlert, systemStatus }
         {badge && (
           <div className="topbar-alert-chip" style={{ background: mon ? 'rgba(52,211,153,0.12)' : 'rgba(251,191,36,0.12)', color: mon ? 'var(--success)' : 'var(--warn)' }}>
             <span>{badge}</span>
-            {systemStatus?.primary_camera?.name && (
-              <span className="chip-time"> · {systemStatus.primary_camera.name}</span>
+            {focusName && (
+              <span className="chip-time">
+                {' '}·{' '}
+                <span style={{ color: isPersonal ? 'var(--accent)' : 'inherit', fontWeight: isPersonal ? 'bold' : 'normal' }}>
+                  {isPersonal ? `★ ${focusName}` : focusName}
+                </span>
+              </span>
             )}
           </div>
         )}
-        {latestAlert?.animal_detected ? (
+        {isDangerous ? (
           <div className="topbar-alert-chip danger">
             <AlertTriangle size={13}/>
             <span>{latestAlert.animal_type} detected</span>
@@ -58,7 +69,7 @@ export default function TopBar({ page, serverStatus, latestAlert, systemStatus }
         ) : latestAlert ? (
           <div className="topbar-alert-chip safe">
             <CheckCircle size={13}/>
-            <span>All clear</span>
+            <span>{latestAlert.animal_detected ? `${latestAlert.animal_type} safe` : 'All clear'}</span>
           </div>
         ) : (
           <div className="topbar-alert-chip idle">

@@ -66,6 +66,7 @@ detector = AnimalDetector()
 # ── In-memory state ──────────────────────────
 latest_alert = {
     "animal_detected": False,
+    "dangerous": False,
     "animal_type": None,
     "confidence": 0.0,
     "location": "0.0,0.0",
@@ -75,6 +76,23 @@ latest_alert = {
     "image": None,
 }
 
+latest_alerts_by_camera = {}
+
+
+def _is_dangerous_detection(detection):
+    class_name = detection.get("class_name", "").lower() if detection else ""
+    return bool(
+        class_name
+        and any(animal in class_name for animal in detector.DANGEROUS_ANIMALS)
+    )
+
+
+def _select_detection(detections):
+    dangerous = [d for d in detections if _is_dangerous_detection(d)]
+    if dangerous:
+        return max(dangerous, key=lambda d: d["confidence"])
+    return max(detections, key=lambda d: d["confidence"])
+
 # Fix: lock to protect latest_alert from simultaneous writes by webcam thread + HTTP thread
 _alert_lock = threading.Lock()
 
@@ -83,6 +101,13 @@ cameras = {
     "CAM_01":     "18.5204,73.8567",
     "CAM_02":     "18.5250,73.8600",
     "CAM_03":     "18.5190,73.8500",
+}
+
+camera_rtsp_urls = {
+    "CAM_WEBCAM": "",
+    "CAM_01": "",
+    "CAM_02": "",
+    "CAM_03": "",
 }
 
 system_settings = {
@@ -132,8 +157,9 @@ def _save_settings_to_db():
 def _load_cameras_from_db():
     if db_connected and db is not None:
         try:
-            for cam in db["cameras"].find({}, {"id": 1, "location": 1}):
+            for cam in db["cameras"].find({}, {"id": 1, "location": 1, "rtspUrl": 1}):
                 cameras[cam["id"]] = cam["location"]
+                camera_rtsp_urls[cam["id"]] = cam.get("rtspUrl", "")
             print(f"[INFO] Loaded {len(cameras)} cameras from MongoDB.")
         except Exception as e:
             print(f"[WARN] Could not load cameras from MongoDB: {e}")
@@ -218,26 +244,70 @@ _frame_lock = threading.Lock()
 _webcam_running = False
 
 
+def _get_active_camera_source():
+    primary_id = _get_primary_camera_id()
+    rtsp = camera_rtsp_urls.get(primary_id, "")
+    if rtsp and rtsp.strip():
+        return rtsp.strip()
+    return 0  # Fallback to webcam
+
 def _webcam_thread():
     global _latest_frame, _webcam_running
-    cap = cv2.VideoCapture(0)
-    if not cap.isOpened():
-        print("[WARN] Could not open webcam — webcam feed disabled.")
-        _webcam_running = False
-        return
-
     _webcam_running = True
-    print("[INFO] Webcam capture started.")
+    print("[INFO] Dynamic stream capture thread started.")
+    
+    current_source = None
+    cap = None
+    
     while _webcam_running:
+        # Determine the source for the current primary camera
+        target_source = _get_active_camera_source()
+        
+        # If source changed, open new capture
+        if cap is None or target_source != current_source:
+            if cap is not None:
+                cap.release()
+                print(f"[INFO] Released stream source: {current_source}")
+            
+            current_source = target_source
+            print(f"[INFO] Opening new stream source: {current_source}")
+            if isinstance(current_source, str) and (current_source.startswith("rtsp://") or current_source.startswith("http://") or current_source.startswith("https://")):
+                cap = cv2.VideoCapture(current_source)
+            else:
+                try:
+                    src_val = int(current_source)
+                except ValueError:
+                    src_val = 0
+                cap = cv2.VideoCapture(src_val)
+            
+            if not cap.isOpened():
+                print(f"[WARN] Could not open stream source: {current_source}. Falling back to webcam 0.")
+                cap = cv2.VideoCapture(0)
+                current_source = 0
+        
         ret, frame = cap.read()
         if ret:
             with _frame_lock:
                 _latest_frame = frame.copy()
+        else:
+            # Generate a custom dark signal-lost frame to inform user
+            primary_id = _get_primary_camera_id()
+            dummy = np.zeros((480, 640, 3), dtype=np.uint8)
+            cv2.putText(dummy, f"No Signal: {primary_id}", (50, 220),
+                        cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 0, 255), 3)
+            cv2.putText(dummy, f"Source: {current_source}", (50, 280),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (180, 180, 180), 1)
+            cv2.putText(dummy, "Please check camera connection & RTSP URL", (50, 330),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (140, 140, 140), 1)
+            with _frame_lock:
+                _latest_frame = dummy
+            time.sleep(0.5) # Wait before retry
+            
         time.sleep(0.033)
-
-    cap.release()
-    print("[INFO] Webcam capture stopped.")
-
+        
+    if cap is not None:
+        cap.release()
+    print("[INFO] Dynamic stream capture thread stopped.")
 
 webcam_thread = threading.Thread(target=_webcam_thread, daemon=True)
 webcam_thread.start()
@@ -257,12 +327,15 @@ def _auto_detect_loop():
         with _settings_lock:
             monitoring_on = system_settings.get("monitoring_enabled", True)
 
+        cam_id = _get_primary_camera_id()
         cam_location = _get_detection_location()
         lat_val, lng_val = _parse_lat_lng(cam_location)
 
         if not monitoring_on:
             new_alert = {
+                "camera_id": cam_id,
                 "animal_detected": False,
+                "dangerous": False,
                 "animal_type": None,
                 "confidence": 0.0,
                 "location": cam_location,
@@ -273,6 +346,7 @@ def _auto_detect_loop():
             }
             with _alert_lock:
                 latest_alert = new_alert
+                latest_alerts_by_camera[cam_id] = new_alert
             continue
 
         frame = _get_latest_frame()
@@ -282,13 +356,16 @@ def _auto_detect_loop():
         detections = detector.detect(frame)
 
         if detections:
-            best = max(detections, key=lambda d: d["confidence"])
+            best = _select_detection(detections)
+            is_dangerous = _is_dangerous_detection(best)
             success, jpeg = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
             image_b64 = (
                 base64.b64encode(jpeg.tobytes()).decode("utf-8") if success else None
             )
             new_alert = {
+                "camera_id": cam_id,
                 "animal_detected": True,
+                "dangerous": is_dangerous,
                 "animal_type": best["class_name"],
                 "confidence": round(best["confidence"], 2),
                 "location": cam_location,
@@ -299,7 +376,9 @@ def _auto_detect_loop():
             }
         else:
             new_alert = {
+                "camera_id": cam_id,
                 "animal_detected": False,
+                "dangerous": False,
                 "animal_type": None,
                 "confidence": 0.0,
                 "location": cam_location,
@@ -311,8 +390,9 @@ def _auto_detect_loop():
 
         with _alert_lock:
             latest_alert = new_alert
+            latest_alerts_by_camera[cam_id] = new_alert
 
-        if new_alert["animal_detected"]:
+        if new_alert["dangerous"]:
             save_alert_to_db(new_alert)
 
 
@@ -336,8 +416,38 @@ def health():
 
 @app.route("/latest-alert", methods=["GET"])
 def get_latest_alert():
+    cam_id = request.args.get("camera_id")
     with _alert_lock:
-        data = dict(latest_alert)
+        if cam_id:
+            data = latest_alerts_by_camera.get(cam_id)
+            if not data:
+                # Secondary DB query fallback
+                if db_connected and db is not None:
+                    try:
+                        db_alert = db["alerts"].find_one({"camera_id": cam_id}, sort=[("timestamp", -1)])
+                        if db_alert:
+                            db_alert.pop("_id", None)
+                            data = db_alert
+                    except Exception:
+                        pass
+                # Construct default clear payload if no alert history exists
+                if not data:
+                    loc = cameras.get(cam_id, "18.5204,73.8567")
+                    lat, lng = _parse_lat_lng(loc)
+                    data = {
+                        "camera_id": cam_id,
+                        "animal_detected": False,
+                        "dangerous": False,
+                        "animal_type": None,
+                        "confidence": 0.0,
+                        "location": loc,
+                        "latitude": lat,
+                        "longitude": lng,
+                        "timestamp": int(time.time()),
+                        "image": None,
+                    }
+        else:
+            data = dict(latest_alert)
     return jsonify(data)
 
 
@@ -394,10 +504,7 @@ def detect_from_camera():
         nparr     = np.frombuffer(img_bytes, np.uint8)
         frame     = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
 
-        detections  = detector.detect(frame)
-        is_dangerous = any(
-            d["class_name"].lower() in detector.DANGEROUS_ANIMALS for d in detections
-        )
+        detections = detector.detect(frame)
 
         cam_location = cameras[camera_id]
         try:
@@ -408,9 +515,12 @@ def detect_from_camera():
             lng_val = 0.0
 
         if detections:
-            best = max(detections, key=lambda d: d["confidence"])
+            best = _select_detection(detections)
+            is_dangerous = _is_dangerous_detection(best)
             new_alert = {
+                "camera_id": camera_id,
                 "animal_detected": True,
+                "dangerous": is_dangerous,
                 "animal_type": best["class_name"],
                 "confidence": round(best["confidence"], 2),
                 "location": cam_location,
@@ -419,11 +529,15 @@ def detect_from_camera():
                 "timestamp": int(time.time()),
                 "image": image_b64,
             }
-            save_alert_to_db(new_alert)
-            message = "Wildlife detected!"
+            if is_dangerous:
+                save_alert_to_db(new_alert)
+            message = "Dangerous wildlife detected!" if is_dangerous else "Safe detection."
         else:
+            is_dangerous = False
             new_alert = {
+                "camera_id": camera_id,
                 "animal_detected": False,
+                "dangerous": False,
                 "animal_type": None,
                 "confidence": 0.0,
                 "location": cam_location,
@@ -437,6 +551,7 @@ def detect_from_camera():
         # Fix: use lock when writing shared state (race condition with auto-detect loop)
         with _alert_lock:
             latest_alert = new_alert
+            latest_alerts_by_camera[camera_id] = new_alert
 
         return jsonify({
             "status":     "success",
@@ -451,25 +566,165 @@ def detect_from_camera():
 
 
 # ── Live browser preview ──────────────────────
-def _mjpeg_generator():
+def _get_camera_details(camera_id):
+    name = camera_id
+    status = "active"
+    rtsp = ""
+    location_str = "18.5204,73.8567"
+    
+    if db_connected and db is not None:
+        try:
+            c = db["cameras"].find_one({"id": camera_id})
+            if c:
+                name = c.get("name", camera_id)
+                status = c.get("status", "active")
+                rtsp = c.get("rtspUrl", "")
+                location_str = c.get("location", "18.5204,73.8567")
+                return name, status, rtsp, location_str
+        except Exception:
+            pass
+            
+    # Fallback to local dicts
+    location_str = cameras.get(camera_id, "18.5204,73.8567")
+    rtsp = camera_rtsp_urls.get(camera_id, "")
+    
+    name_map = {
+        "CAM_WEBCAM": "Webcam (Dev)",
+        "CAM_01": "North Perimeter",
+        "CAM_02": "East Gate",
+        "CAM_03": "South Boundary",
+    }
+    name = name_map.get(camera_id, camera_id)
+    status = "offline" if camera_id == "CAM_02" else "active"
+    return name, status, rtsp, location_str
+
+
+def _mjpeg_generator(camera_id):
+    print(f"[INFO] Started dynamic MJPEG stream for {camera_id}")
     while True:
-        frame = _get_latest_frame()
-        if frame is None:
-            time.sleep(0.1)
+        cam_name, cam_status, rtsp, location_str = _get_camera_details(camera_id)
+        
+        # 1. If camera is offline, show offline card
+        if cam_status == "offline":
+            dummy = np.zeros((480, 640, 3), dtype=np.uint8)
+            for y in range(0, 480, 20):
+                cv2.line(dummy, (0, y), (640, y), (15, 20, 25), 1)
+            cv2.rectangle(dummy, (20, 20), (620, 460), (30, 35, 40), 2)
+            cv2.putText(dummy, "CAMERA OFFLINE", (170, 200),
+                        cv2.FONT_HERSHEY_SIMPLEX, 1.1, (90, 100, 255), 3)
+            cv2.putText(dummy, f"ID: {camera_id} | Name: {cam_name}", (100, 250),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (180, 180, 180), 1)
+            cv2.putText(dummy, "Click 'Start' in Camera Management to activate stream", (80, 300),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (140, 140, 140), 1)
+            
+            time_str = time.strftime("%Y-%m-%d %H:%M:%S")
+            cv2.putText(dummy, time_str, (400, 440), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (100, 100, 100), 1)
+            
+            _, jpeg = cv2.imencode(".jpg", dummy, [cv2.IMWRITE_JPEG_QUALITY, 80])
+            yield (b"--frame\r\nContent-Type: image/jpeg\r\n\r\n"
+                   + jpeg.tobytes() + b"\r\n")
+            time.sleep(1.0)
             continue
 
-        with _alert_lock:
-            al = dict(latest_alert)
-
-        if al["animal_detected"]:
-            label = f"{al['animal_type']}  {al['confidence']:.1f}%"
-            cv2.putText(frame, label, (10, 36),
-                        cv2.FONT_HERSHEY_SIMPLEX, 1.1, (0, 60, 255), 3)
-            cv2.rectangle(frame, (5, 5), (frame.shape[1]-5, frame.shape[0]-5),
-                          (0, 0, 220), 3)
+        # 2. Get the base video frame
+        frame = None
+        is_rtsp = rtsp and rtsp.strip()
+        is_global_primary = (camera_id == _get_primary_camera_id())
+        
+        if is_rtsp and not is_global_primary:
+            cap_temp = cv2.VideoCapture(rtsp.strip())
+            if cap_temp.isOpened():
+                ret, f_read = cap_temp.read()
+                if ret:
+                    frame = f_read
+                cap_temp.release()
+            
+            if frame is None:
+                # RTSP offline / failed -> show "NO SIGNAL" placeholder
+                dummy = np.zeros((480, 640, 3), dtype=np.uint8)
+                for offset in range(-480, 640, 40):
+                    cv2.line(dummy, (offset, 0), (offset + 480, 480), (0, 0, 40), 4)
+                cv2.putText(dummy, f"NO SIGNAL: {camera_id}", (150, 220),
+                            cv2.FONT_HERSHEY_SIMPLEX, 1.1, (0, 0, 255), 3)
+                cv2.putText(dummy, f"RTSP URL: {rtsp}", (50, 270),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (180, 180, 180), 1)
+                cv2.putText(dummy, "Please check camera connection & RTSP URL", (50, 320),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (140, 140, 140), 1)
+                _, jpeg = cv2.imencode(".jpg", dummy, [cv2.IMWRITE_JPEG_QUALITY, 80])
+                yield (b"--frame\r\nContent-Type: image/jpeg\r\n\r\n"
+                       + jpeg.tobytes() + b"\r\n")
+                time.sleep(1.0)
+                continue
         else:
-            cv2.putText(frame, "No animal detected", (10, 36),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.9, (50, 200, 50), 2)
+            frame = _get_latest_frame()
+            if frame is not None:
+                frame = frame.copy()
+                
+        if frame is None:
+            dummy = np.zeros((480, 640, 3), dtype=np.uint8)
+            cv2.putText(dummy, "CONNECTING TO CAMERA...", (150, 240),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, (200, 200, 200), 2)
+            _, jpeg = cv2.imencode(".jpg", dummy, [cv2.IMWRITE_JPEG_QUALITY, 80])
+            yield (b"--frame\r\nContent-Type: image/jpeg\r\n\r\n"
+                   + jpeg.tobytes() + b"\r\n")
+            time.sleep(0.5)
+            continue
+
+        if frame.shape[0] != 480 or frame.shape[1] != 640:
+            frame = cv2.resize(frame, (640, 480))
+
+        # 3. Apply CCTV lens filters based on the selected camera
+        if camera_id == "CAM_03":
+            # Green night-vision monocle
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            frame = np.zeros_like(frame)
+            frame[:, :, 1] = gray
+            frame[:, :, 1] = cv2.add(frame[:, :, 1], 15)
+        elif camera_id == "CAM_02":
+            # Cool blue tinted outdoor security lens
+            frame[:, :, 0] = cv2.add(frame[:, :, 0], 35)
+            frame[:, :, 1] = cv2.subtract(frame[:, :, 1], 10)
+            frame[:, :, 2] = cv2.subtract(frame[:, :, 2], 25)
+        elif camera_id == "CAM_01":
+            frame[:, :, 2] = cv2.add(frame[:, :, 2], 10)
+
+        # 4. Check for active alerts for THIS camera
+        al = None
+        with _alert_lock:
+            al_raw = latest_alerts_by_camera.get(camera_id)
+            if al_raw:
+                al = dict(al_raw)
+        
+        is_hot_alert = al and al.get("dangerous", False) and (time.time() - al["timestamp"] < 5)
+        
+        if is_hot_alert:
+            label = f"ALERT: {al['animal_type']} ({int(al['confidence'] * 100)}%)"
+            cv2.rectangle(frame, (8, 8), (632, 472), (0, 0, 220), 4)
+            cv2.rectangle(frame, (0, 0), (640, 45), (0, 0, 200), -1)
+            cv2.putText(frame, f"WARNING: WILDLIFE DETECTED - {label}", (20, 30),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 255), 2)
+        else:
+            overlay_h = frame.copy()
+            cv2.rectangle(overlay_h, (0, 0), (640, 50), (0, 0, 0), -1)
+            cv2.addWeighted(overlay_h, 0.45, frame, 0.55, 0, frame)
+
+        # 5. Draw standard CCTV Telemetry Text Overlays
+        sec = int(time.time())
+        if sec % 2 == 0:
+            cv2.circle(frame, (25, 25), 6, (0, 0, 255), -1)
+            cv2.putText(frame, "REC", (38, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
+        else:
+            cv2.circle(frame, (25, 25), 6, (60, 60, 60), -1)
+            cv2.putText(frame, "REC", (38, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (160, 160, 160), 1)
+
+        cam_tag = f"CCTV: {camera_id} - {cam_name}"
+        cv2.putText(frame, cam_tag, (110, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+
+        gps_tag = f"LOC: {location_str}"
+        cv2.putText(frame, gps_tag, (420, 21), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (220, 220, 220), 1)
+
+        time_str = time.strftime("%Y-%m-%d %H:%M:%S")
+        cv2.putText(frame, time_str, (420, 38), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (220, 220, 220), 1)
 
         _, jpeg = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
         yield (b"--frame\r\nContent-Type: image/jpeg\r\n\r\n"
@@ -479,7 +734,10 @@ def _mjpeg_generator():
 
 @app.route("/video_feed")
 def video_feed():
-    return Response(_mjpeg_generator(),
+    camera_id = request.args.get("camera_id")
+    if not camera_id:
+        camera_id = _get_primary_camera_id()
+    return Response(_mjpeg_generator(camera_id),
                     mimetype="multipart/x-mixed-replace; boundary=frame")
 
 
@@ -521,9 +779,12 @@ PREVIEW_HTML = """
         const d  = await r.json();
         const box = document.getElementById('alert-box');
         const tbl = document.getElementById('details');
-        if (d.animal_detected) {
+        if (d.dangerous) {
           box.className = 'detected';
           box.textContent = '🚨 ' + d.animal_type + ' detected  (' + d.confidence + '%)';
+        } else if (d.animal_detected) {
+          box.className = 'clear';
+          box.textContent = 'Safe: ' + d.animal_type + ' detected  (' + d.confidence + '%)';
         } else {
           box.className = 'clear';
           box.textContent = '✅ No animal detected';
@@ -737,11 +998,13 @@ def api_add_camera():
             }
             db["cameras"].update_one({"id": cam_id}, {"$set": new_cam}, upsert=True)
             cameras[cam_id] = location
+            camera_rtsp_urls[cam_id] = new_cam.get("rtspUrl", "")
             return jsonify({"status": "success", "camera": new_cam})
         except Exception as e:
             return jsonify({"status": "error", "message": f"Database error: {e}"}), 500
     else:
         cameras[cam_id] = location
+        camera_rtsp_urls[cam_id] = data.get("rtspUrl", "")
         return jsonify({"status": "success", "message": "Camera added (Mock Mode)"})
 
 
@@ -761,12 +1024,16 @@ def api_update_camera(id):
                 db["cameras"].update_one({"id": id}, {"$set": data})
             if "location" in data:
                 cameras[id] = data["location"]
+            if "rtspUrl" in data:
+                camera_rtsp_urls[id] = data["rtspUrl"]
             return jsonify({"status": "success"})
         except Exception as e:
             return jsonify({"status": "error", "message": f"Database error: {e}"}), 500
     else:
         if "location" in data:
             cameras[id] = data["location"]
+        if "rtspUrl" in data:
+            camera_rtsp_urls[id] = data["rtspUrl"]
         return jsonify({"status": "success", "message": "Updated (mock)"})
 
 

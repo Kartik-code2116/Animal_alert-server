@@ -1,14 +1,19 @@
-import { Camera, AlertTriangle, CheckCircle, Activity, Clock, Eye, Play, Square, RefreshCw } from 'lucide-react';
+import { Camera, AlertTriangle, CheckCircle, Activity, Clock, Eye, Play, Square, RefreshCw, Star } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
 import { useMemo } from 'react';
+import { isDangerousDetection } from '../utils/detection';
 
 // Fix: accept serverBase from props so the live feed URL follows user-configured server address
-export default function Dashboard({ serverStatus, latestAlert, alertHistory, cameras, serverBase, systemStatus, setMonitoring, refreshAll }) {
+export default function Dashboard({ serverStatus, latestAlert, alertHistory, cameras, serverBase, systemStatus, setMonitoring, refreshAll, personalPrimary, effectivePrimary }) {
   const activeCams = systemStatus?.cameras?.active ?? cameras.filter(c => c.status === 'active').length;
   const totalCams = systemStatus?.cameras?.total ?? cameras.length;
   const offlineCams = systemStatus?.cameras?.offline ?? cameras.filter(c => c.status === 'offline').length;
   const monitoringOn = systemStatus?.monitoring_enabled !== false;
+  const isDangerous = isDangerousDetection(latestAlert);
   const primaryName = systemStatus?.primary_camera?.name || cameras.find(c => c.is_primary)?.name || '—';
+  const focusedCamera = cameras.find(c => c.id === effectivePrimary);
+  const focusedCameraName = focusedCamera?.name || effectivePrimary || primaryName;
+  const isPersonalFocus = Boolean(personalPrimary && personalPrimary === effectivePrimary);
   const todayAlerts = useMemo(() => {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
@@ -99,9 +104,9 @@ export default function Dashboard({ serverStatus, latestAlert, alertHistory, cam
         />
         <StatCard
           label="Current Status"
-          value={latestAlert?.animal_detected ? 'ALERT' : 'Clear'}
+          value={isDangerous ? 'ALERT' : 'Safe'}
           sub={latestAlert?.animal_type || 'No detection'}
-          color={latestAlert?.animal_detected ? 'var(--danger)' : 'var(--success)'}
+          color={isDangerous ? 'var(--danger)' : 'var(--success)'}
           icon={<Eye size={18} />}
         />
       </div>
@@ -109,8 +114,22 @@ export default function Dashboard({ serverStatus, latestAlert, alertHistory, cam
       <div className="dash-grid-2">
         {/* Live feed card */}
         <div className="card">
-          <div className="section-header">
-            <h2>Live Camera Feed</h2>
+          <div className="section-header live-feed-header">
+            <div className="live-feed-title-block">
+              <h2>Live Camera Feed</h2>
+              <div className="live-camera-meta">
+                <span className="live-camera-label">Camera</span>
+                <span className={`live-camera-name ${isPersonalFocus ? 'personal' : ''}`}>
+                  {focusedCameraName}
+                </span>
+                {isPersonalFocus && (
+                  <span className="live-focus-badge">
+                    <Star size={10} />
+                    Personal Focus
+                  </span>
+                )}
+              </div>
+            </div>
             <span className={`pill ${serverStatus === 'online' ? 'pill-online' : 'pill-offline'}`}>
               <span className={`pill-dot ${serverStatus === 'online' ? 'pulse' : ''}`}/>
               {serverStatus === 'online' ? 'Streaming' : 'Offline'}
@@ -118,10 +137,9 @@ export default function Dashboard({ serverStatus, latestAlert, alertHistory, cam
           </div>
           {serverStatus === 'online' ? (
             <div className="live-feed-wrap">
-              {/* Fix: was hardcoded to http://localhost:5000/video_feed — now uses serverBase prop */}
               <img
-                src={`${serverBase}/video_feed`}
-                alt="Live webcam feed"
+                src={`${serverBase}/video_feed?camera_id=${effectivePrimary}`}
+                alt="Live camera feed"
                 className="live-feed-img"
                 onError={e => { e.target.style.display = 'none'; e.target.nextSibling.style.display = 'flex'; }}
               />
@@ -129,7 +147,7 @@ export default function Dashboard({ serverStatus, latestAlert, alertHistory, cam
                 <Camera size={32} />
                 <p>Feed unavailable</p>
               </div>
-              {latestAlert?.animal_detected && (
+              {isDangerous && (
                 <div className="live-overlay-badge">
                   <AlertTriangle size={12} />
                   {latestAlert.animal_type} — {latestAlert.confidence}%
@@ -156,8 +174,8 @@ export default function Dashboard({ serverStatus, latestAlert, alertHistory, cam
           </div>
           {latestAlert ? (
             <div className="detection-detail">
-              <div className={`detection-status-icon ${latestAlert.animal_detected ? 'alert' : 'clear'}`}>
-                {latestAlert.animal_detected
+              <div className={`detection-status-icon ${isDangerous ? 'alert' : 'clear'}`}>
+                {isDangerous
                   ? <AlertTriangle size={28} />
                   : <CheckCircle size={28} />}
               </div>
@@ -165,7 +183,7 @@ export default function Dashboard({ serverStatus, latestAlert, alertHistory, cam
                 <DetRow label="Animal" value={latestAlert.animal_type || 'None'} />
                 <DetRow label="Confidence" value={latestAlert.confidence ? `${latestAlert.confidence}%` : '—'} />
                 <DetRow label="Location" value={latestAlert.location || '—'} mono />
-                <DetRow label="Status" value={latestAlert.animal_detected ? '🔴 ALERT' : '🟢 Clear'} />
+                <DetRow label="Status" value={isDangerous ? 'Danger' : 'Safe'} />
               </div>
               {latestAlert.image && (
                 <div className="detection-thumb-wrap">

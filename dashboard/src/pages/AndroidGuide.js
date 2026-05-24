@@ -57,16 +57,25 @@ const STEPS = [
     icon: <CheckCircle size={20} />,
     color: 'var(--success)',
   },
+  {
+    num: '07',
+    title: 'Implement Local Focus (Personal Primary Camera)',
+    desc: 'Let each user set their focus camera locally. Store it in SharedPreferences and query /latest-alert?camera_id=CAM_XX to fetch camera-specific alerts.',
+    code: '// 1. Save chosen focus camera ID to SharedPreferences:\nval prefs = ctx.getSharedPreferences("wt_prefs", Context.MODE_PRIVATE)\nprefs.edit().putString("personal_focus_cam", "CAM_03").apply()\n\n// 2. Add optional query parameter in Retrofit interface:\ninterface WildTrackApi {\n    @GET("latest-alert")\n    suspend fun getLatestAlert(\n        @Query("camera_id") cameraId: String?\n    ): Response<AlertResponse>\n}\n\n// 3. Retrieve focus and query from background AlertService:\nval currentFocus = prefs.getString("personal_focus_cam", null)\nval response = api.getLatestAlert(currentFocus)',
+    tip: 'If camera_id is null or omitted, the server falls back automatically to the global active primary camera.',
+    icon: <Smartphone size={20} />,
+    color: 'var(--accent)',
+  },
 ];
 
 const API_ENDPOINTS = [
   { method: 'GET',  path: '/api/cameras',     desc: 'Each camera has camera_number (1,2,3…), city, is_primary — show # on map', used: 'MapFragment polls every 30s' },
   { method: 'GET',  path: '/api/system/status', desc: 'deployment_city + camera counts for dashboard badge', used: 'DashboardFragment' },
   { method: 'GET',  path: '/health',          desc: 'Health check — returns {"status":"healthy"}', used: 'App startup check' },
-  { method: 'GET',  path: '/latest-alert',    desc: 'Latest detection state',                       used: 'Polled every 3s by AlertService' },
+  { method: 'GET',  path: '/latest-alert',    desc: 'Latest alert. Accepts optional ?camera_id=CAM_XX to filter alerts locally.', used: 'Polled every 3s by AlertService' },
   { method: 'POST', path: '/register/camera', desc: 'Register a camera with GPS coords',            used: 'Camera Management → Add Camera' },
   { method: 'POST', path: '/camera/detect',   desc: 'Submit a base64 JPEG for ML inference',        used: 'CCTV frame submission' },
-  { method: 'GET',  path: '/video_feed',      desc: 'MJPEG stream (browser preview)',                used: 'Dashboard live feed' },
+  { method: 'GET',  path: '/video_feed',      desc: 'MJPEG stream (browser preview). Supports ?camera_id=CAM_XX', used: 'Dashboard live feed' },
   { method: 'GET',  path: '/preview',         desc: 'Styled browser monitor page',                  used: 'Quick preview' },
 ];
 

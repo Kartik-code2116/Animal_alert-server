@@ -21,7 +21,7 @@ class CamerasMapBoundary extends Component {
   }
 }
 
-export default function Cameras({ cameras, addCamera, removeCamera, updateCamera, cameraControl, serverStatus, systemStatus }) {
+export default function Cameras({ cameras, addCamera, removeCamera, updateCamera, cameraControl, serverStatus, systemStatus, personalPrimary, setPersonalPrimary }) {
   const deploymentCity = systemStatus?.deployment_city || cameras[0]?.city || 'Pune';
   const [showAdd, setShowAdd] = useState(false);
   const [editId, setEditId] = useState(null);
@@ -101,7 +101,7 @@ export default function Cameras({ cameras, addCamera, removeCamera, updateCamera
         </div>
       )}
 
-      {serverStatus === 'online' && cameras.length > 0 && (
+      {cameras.length > 0 && (
         <CamerasMapBoundary>
           <AllCamerasMap
             cameras={cameras}
@@ -133,6 +133,8 @@ export default function Cameras({ cameras, addCamera, removeCamera, updateCamera
                 onStart={() => cameraControl(cam.id, 'start')}
                 onStop={() => cameraControl(cam.id, 'stop')}
                 onSetPrimary={() => cameraControl(cam.id, 'set_primary')}
+                personalPrimary={personalPrimary}
+                onSetPersonalPrimary={() => setPersonalPrimary(personalPrimary === cam.id ? '' : cam.id)}
               />
         ))}
         {filtered.length === 0 && (
@@ -253,25 +255,38 @@ function CamStat({ label, value, color }) {
   );
 }
 
-function CameraCard({ cam, onEdit, onRemove, onStart, onStop, onSetPrimary }) {
+function CameraCard({ cam, onEdit, onRemove, onStart, onStop, onSetPrimary, personalPrimary, onSetPersonalPrimary }) {
   const [expanded, setExpanded] = useState(false);
   const isActive = cam.status === 'active';
   const isPrimary = cam.is_primary;
+  const isPersonalFocus = personalPrimary === cam.id;
+
+  let cardStyle = {};
+  if (isPersonalFocus) {
+    cardStyle = { boxShadow: '0 0 0 3px var(--accent)', border: '1px solid var(--accent)' };
+  } else if (isPrimary) {
+    cardStyle = { boxShadow: '0 0 0 2px rgba(251,191,36,0.5)' };
+  }
+
   return (
-    <div className={`camera-card ${isActive ? '' : 'offline'} ${isPrimary ? 'primary-cam' : ''}`}
-      style={isPrimary ? { boxShadow: '0 0 0 2px rgba(251,191,36,0.5)' } : {}}>
-      <div className="camera-card-header">
-        {cam.camera_number != null && (
-          <span className="cam-number-badge">#{cam.camera_number}</span>
-        )}
-        <div className="camera-icon-wrap">
-          <Camera size={18}/>
+    <div className={`camera-card ${isActive ? '' : 'offline'} ${isPrimary ? 'primary-cam' : ''}`} style={cardStyle}>
+      <div className="camera-card-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', width: '100%' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0, flex: 1 }}>
+          {cam.camera_number != null && (
+            <span className="cam-number-badge">#{cam.camera_number}</span>
+          )}
+          <div className="camera-icon-wrap">
+            <Camera size={18}/>
+          </div>
+          <div className="camera-card-id mono" style={{ fontSize: '11px', color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{cam.id}</div>
         </div>
-        <div className="camera-card-id mono">{cam.id}</div>
-        {isPrimary && <span className="pill" style={{background:'rgba(251,191,36,0.2)',color:'#fbbf24',fontSize:10}}>PRIMARY</span>}
-        <span className={`pill ${isActive ? 'pill-online' : 'pill-offline'}`}>
-          <span className={`pill-dot ${isActive ? 'pulse' : ''}`}/>{cam.status}
-        </span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0 }}>
+          {isPrimary && <span className="pill" style={{background:'rgba(251,191,36,0.2)',color:'#fbbf24',fontSize:10}}>PRIMARY</span>}
+          {isPersonalFocus && <span className="pill" style={{background:'rgba(99,179,237,0.2)',color:'var(--accent)',fontSize:10,fontWeight:'bold'}}>MY FOCUS</span>}
+          <span className={`pill ${isActive ? 'pill-online' : 'pill-offline'}`}>
+            <span className={`pill-dot ${isActive ? 'pulse' : ''}`}/>{cam.status}
+          </span>
+        </div>
       </div>
 
       <div className="camera-card-name">
@@ -312,6 +327,15 @@ function CameraCard({ cam, onEdit, onRemove, onStart, onStop, onSetPrimary }) {
         ) : (
           <button className="btn btn-sm" onClick={onStart}><Play size={12}/> Start</button>
         )}
+        <button
+          className={`btn btn-sm ${isPersonalFocus ? 'btn-primary' : ''}`}
+          onClick={onSetPersonalPrimary}
+          title={isPersonalFocus ? "Unfocus this camera" : "Focus this camera locally on your device"}
+          style={isPersonalFocus ? { background: 'var(--accent)', color: '#07111e' } : {}}
+        >
+          <Star size={12} fill={isPersonalFocus ? '#07111e' : 'none'}/>
+          {isPersonalFocus ? 'Focused' : 'Focus'}
+        </button>
         {!isPrimary && (
           <button className="btn btn-sm" onClick={onSetPrimary} title="Use this camera GPS for new alerts">
             <Star size={12}/> Set Primary

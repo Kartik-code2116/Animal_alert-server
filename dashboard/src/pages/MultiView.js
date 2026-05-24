@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { Camera, AlertTriangle, CheckCircle, Clock, Wifi, WifiOff, Eye, Activity } from 'lucide-react';
+import { isDangerousDetection } from '../utils/detection';
 import './pages.css';
 
 const DANGER_LEVELS = {
@@ -73,7 +74,7 @@ export default function MultiView({ cameras, alertHistory, latestAlert, serverSt
   }, [latestAlert, cameras]);
 
   const activeCams = cameras.filter(c => c.status === 'active');
-  const alertCount = Object.values(camAlerts).filter(a => a?.animal_detected).length;
+  const alertCount = Object.values(camAlerts).filter(isDangerousDetection).length;
 
   return (
     <div className="multiview-page">
@@ -123,7 +124,7 @@ export default function MultiView({ cameras, alertHistory, latestAlert, serverSt
               <img src={`${serverBase}/video_feed`} alt="Live feed" className="mv-live-img"
                 onError={e=>{e.target.style.display='none';e.target.nextSibling.style.display='flex';}}/>
               <div className="mv-feed-error" style={{display:'none'}}><Camera size={28}/><p>Feed unavailable</p></div>
-              {latestAlert?.animal_detected && (
+              {isDangerousDetection(latestAlert) && (
                 <div className="mv-live-badge danger"><AlertTriangle size={11}/> {latestAlert.animal_type} — {latestAlert.confidence}%</div>
               )}
               <div className="mv-live-badge rec">● REC</div>
@@ -134,12 +135,12 @@ export default function MultiView({ cameras, alertHistory, latestAlert, serverSt
               <div className="divider" style={{margin:'12px 0'}}/>
               {latestAlert ? (
                 <>
-                  <InfoRow label="Status" value={latestAlert.animal_detected ? '🔴 ALERT' : '🟢 Clear'}/>
+                  <InfoRow label="Status" value={isDangerousDetection(latestAlert) ? 'Danger' : 'Safe'}/>
                   <InfoRow label="Animal" value={latestAlert.animal_type || 'None'}/>
                   <InfoRow label="Confidence" value={latestAlert.confidence ? `${latestAlert.confidence}%` : '—'}/>
                   <InfoRow label="Location" value={latestAlert.location || '—'} mono/>
                   <InfoRow label="Last update" value={latestAlert.timestamp ? new Date(latestAlert.timestamp*1000).toLocaleTimeString() : '—'}/>
-                  {latestAlert.animal_detected && (
+                  {isDangerousDetection(latestAlert) && (
                     <div className="mv-danger-badge" style={{marginTop:10,background:levelGlow(getDangerLevel(latestAlert.animal_type)),border:`1px solid ${levelBorder(getDangerLevel(latestAlert.animal_type))}`,color:levelColor(getDangerLevel(latestAlert.animal_type))}}>
                       ⚠ Danger Level {getDangerLevel(latestAlert.animal_type)} / 5
                     </div>
@@ -158,7 +159,7 @@ export default function MultiView({ cameras, alertHistory, latestAlert, serverSt
       <div className={layout==='grid' ? 'mv-cam-grid' : 'mv-cam-list'}>
         {cameras.map(cam => {
           const lastAlert = camAlerts[cam.id] || null;
-          const lvl = lastAlert?.animal_detected ? getDangerLevel(lastAlert.animal_type) : 0;
+          const lvl = isDangerousDetection(lastAlert) ? getDangerLevel(lastAlert.animal_type) : 0;
           return <CameraDetectionCard key={cam.id} cam={cam} lastAlert={lastAlert} dangerLevel={lvl} isActive={cam.status==='active'} layout={layout}/>;
         })}
         {cameras.length === 0 && (
@@ -172,7 +173,8 @@ export default function MultiView({ cameras, alertHistory, latestAlert, serverSt
 }
 
 function CameraDetectionCard({ cam, lastAlert, dangerLevel, isActive, layout }) {
-  const hasAlert = lastAlert?.animal_detected;
+  const hasDetection = lastAlert?.animal_detected;
+  const hasAlert = isDangerousDetection(lastAlert);
   const color = hasAlert ? levelColor(dangerLevel) : isActive ? 'var(--success)' : 'var(--text-muted)';
   const glow = hasAlert ? levelGlow(dangerLevel) : 'transparent';
   const border = hasAlert ? levelBorder(dangerLevel) : isActive ? 'rgba(52,211,153,0.2)' : 'var(--border)';
@@ -190,7 +192,7 @@ function CameraDetectionCard({ cam, lastAlert, dangerLevel, isActive, layout }) 
         <div style={{marginLeft:'auto',display:'flex',alignItems:'center',gap:12}}>
           {hasAlert
             ? <span style={{color:'var(--danger)',fontWeight:700,fontSize:12,fontFamily:'var(--font-mono)'}}>{lastAlert.animal_type} ({lastAlert.confidence}%)</span>
-            : <span style={{color:'var(--success)',fontSize:12}}>Clear</span>}
+            : <span style={{color:'var(--success)',fontSize:12}}>{hasDetection ? `${lastAlert.animal_type} safe` : 'Clear'}</span>}
           <span className={`pill ${isActive?'pill-online':'pill-offline'}`}>
             <span className="pill-dot"/>{cam.status}
           </span>
@@ -225,7 +227,7 @@ function CameraDetectionCard({ cam, lastAlert, dangerLevel, isActive, layout }) 
         </div>
       ) : (
         <div className="mv-card-clear">
-          {isActive ? <><CheckCircle size={14} style={{color:'var(--success)'}}/><span>No detection</span></> : <><WifiOff size={14} style={{color:'var(--text-muted)'}}/><span>Offline</span></>}
+          {isActive ? <><CheckCircle size={14} style={{color:'var(--success)'}}/><span>{hasDetection ? `${lastAlert.animal_type} safe` : 'No detection'}</span></> : <><WifiOff size={14} style={{color:'var(--text-muted)'}}/><span>Offline</span></>}
         </div>
       )}
       <div className="mv-card-footer">

@@ -22,7 +22,7 @@ function waitForMapsApi() {
     let attempts = 0;
     const tick = () => {
       if (mapsApiReady()) resolve();
-      else if (++attempts > 120) reject(new Error('Google Maps API timed out'));
+      else if (++attempts > 600) reject(new Error('Google Maps API timed out'));
       else setTimeout(tick, 50);
     };
     tick();
@@ -30,16 +30,20 @@ function waitForMapsApi() {
 }
 
 function injectMapsBootstrap() {
-  if (window.google?.maps?.importLibrary) return Promise.resolve();
+  if (mapsApiReady()) return Promise.resolve();
   const existing = document.getElementById('wt-maps-bootstrap');
   if (existing) return waitForMapsApi();
   return new Promise((resolve, reject) => {
+    window.initWtMaps = () => {
+      resolve();
+    };
     const script = document.createElement('script');
     script.id = 'wt-maps-bootstrap';
-    script.textContent = `(g=>{var h,a,k,p="The Google Maps JavaScript API",c="google",l="importLibrary",q="__ib__",m=document,b=window;b=b[c]||(b[c]={});var d=b.maps||(b.maps={}),r=new Set,e=new URLSearchParams,u=()=>h||(h=new Promise(async(f,n)=>{await (a=m.createElement("script"));e.set("libraries",[...r]+"");for(k in g)e.set(k.replace(/[A-Z]/g,t=>"_"+t[0].toLowerCase()),g[k]);e.set("callback",c+".maps."+q);a.src=\`https://maps.\${c}apis.com/maps/api/js?\`+e;d[q]=f;a.onerror=()=>h=n(Error(p+" could not load."));a.nonce=m.querySelector("script[nonce]")?.nonce||"";m.head.append(a)}));d[l]?console.warn(p+" only loads once. Ignoring:",g):d[l]=(f,...n)=>r.add(f)&&u().then(()=>d[l](f,...n))})({key:"${GOOGLE_MAPS_API_KEY}",v:"weekly"});`;
-    script.onerror = () => reject(new Error('Google Maps bootstrap failed'));
+    script.src = `https://maps.googleapis.com/maps/api/js?key=${GOOGLE_MAPS_API_KEY}&callback=initWtMaps`;
+    script.async = true;
+    script.defer = true;
+    script.onerror = () => reject(new Error('Google Maps script load failed'));
     document.head.appendChild(script);
-    waitForMapsApi().then(resolve).catch(reject);
   });
 }
 
@@ -50,7 +54,6 @@ function loadGoogleMaps() {
   if (mapsApiReady()) return Promise.resolve();
   if (mapsLoadPromise) return mapsLoadPromise;
   mapsLoadPromise = injectMapsBootstrap()
-    .then(() => window.google.maps.importLibrary('maps'))
     .then(() => waitForMapsApi())
     .catch((err) => {
       mapsLoadPromise = null;
@@ -231,7 +234,22 @@ export function AllCamerasMap({ cameras, selectedId, onSelectCamera, height = 32
     mapRef.current.setZoom(17);
   }, [ready, selectedId, cameras]);
 
-  if (error) return null;
+  if (error) {
+    return (
+      <div className="card camera-map-overview">
+        <div className="section-header" style={{ marginBottom: 8 }}>
+          <h2>{cityLabel} — camera map</h2>
+          <span className="text-muted" style={{ fontSize: 11 }}>
+            Pins show camera #1, #2, #3… (same on every phone app)
+          </span>
+        </div>
+        <div className="camera-map-error">
+          <MapPin size={14} />
+          <span>{error}. Set REACT_APP_GOOGLE_MAPS_API_KEY in dashboard/.env</span>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="card camera-map-overview">

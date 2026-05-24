@@ -9,6 +9,7 @@ import ServerConfig from './pages/ServerConfig';
 import MultiView from './pages/MultiView';
 import AndroidGuide from './pages/AndroidGuide';
 import CctvSetup from './pages/CctvSetup';
+import { isDangerousDetection } from './utils/detection';
 import './App.css';
 import './pages/pages.css';
 
@@ -29,6 +30,13 @@ export default function App() {
   const [serverStatus, setServerStatus] = useState('unknown');
   const [latestAlert, setLatestAlert] = useState(null);
   const [systemStatus, setSystemStatus] = useState(null);
+
+  const [personalPrimary, setPersonalPrimary] = useState(() => {
+    try {
+      const saved = localStorage.getItem('wt_personal_primary');
+      return saved || '';
+    } catch { return ''; }
+  });
 
   const [alertHistory, setAlertHistory] = useState(() => {
     try {
@@ -75,6 +83,29 @@ export default function App() {
       localStorage.setItem('wt_alertHistory', JSON.stringify(pruned));
     } catch { /* */ }
   }, [alertHistory]);
+
+  useEffect(() => {
+    try {
+      if (personalPrimary) {
+        localStorage.setItem('wt_personal_primary', personalPrimary);
+      } else {
+        localStorage.removeItem('wt_personal_primary');
+      }
+    } catch { /* */ }
+  }, [personalPrimary]);
+
+  const getEffectivePrimary = useCallback(() => {
+    if (personalPrimary && cameras.some(c => c.id === personalPrimary)) {
+      return personalPrimary;
+    }
+    const primaryCam = cameras.find(c => c.is_primary);
+    if (primaryCam) return primaryCam.id;
+    if (systemStatus?.active_detection_camera) return systemStatus.active_detection_camera;
+    if (cameras.length > 0) return cameras[0].id;
+    return 'CAM_WEBCAM';
+  }, [personalPrimary, cameras, systemStatus]);
+
+  const effectivePrimary = getEffectivePrimary();
 
   const syncCamerasFromServer = useCallback(async () => {
     try {
@@ -134,10 +165,11 @@ export default function App() {
     if (serverStatus !== 'online') return;
     const poll = async () => {
       try {
-        const r = await fetch(`${serverBase}/latest-alert`, { signal: AbortSignal.timeout(3000) });
+        const queryParam = effectivePrimary ? `?camera_id=${effectivePrimary}` : '';
+        const r = await fetch(`${serverBase}/latest-alert${queryParam}`, { signal: AbortSignal.timeout(3000) });
         const d = await r.json();
         setLatestAlert(d);
-        if (d.animal_detected) {
+        if (isDangerousDetection(d)) {
           const hist = alertHistoryRef.current;
           const ts = d.timestamp > 1e12 ? Math.floor(d.timestamp / 1000) : d.timestamp;
           const isDup = hist.length > 0 &&
@@ -152,7 +184,7 @@ export default function App() {
     poll();
     const t = setInterval(poll, (serverConfig.pollInterval || 3) * 1000);
     return () => clearInterval(t);
-  }, [serverStatus, serverBase, serverConfig.pollInterval]);
+  }, [serverStatus, serverBase, serverConfig.pollInterval, effectivePrimary]);
 
   useEffect(() => {
     if (serverStatus !== 'online') return;
@@ -305,6 +337,9 @@ export default function App() {
     refreshAll,
     syncAlertsFromServer,
     serverBase,
+    personalPrimary,
+    setPersonalPrimary,
+    effectivePrimary,
   };
 
   const pages = {
@@ -323,7 +358,7 @@ export default function App() {
     <div className="app-shell">
       <Sidebar page={page} setPage={setPage} serverStatus={serverStatus} cameras={cameras} systemStatus={systemStatus} />
       <div className="main-area">
-        <TopBar page={page} serverStatus={serverStatus} latestAlert={latestAlert} systemStatus={systemStatus} />
+        <TopBar page={page} serverStatus={serverStatus} latestAlert={latestAlert} systemStatus={systemStatus} personalPrimary={personalPrimary} effectivePrimary={effectivePrimary} cameras={cameras} />
         <main className="page-content">
           <PageComponent {...props} />
         </main>
