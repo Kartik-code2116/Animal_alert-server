@@ -8,6 +8,16 @@ WildTrack Animal Alert Server
 """
 
 import time
+"""
+WildTrack Animal Alert Server
+==============================
+- Captures frames from your laptop webcam
+- Runs animal detection via YOLOv8 (best.pt)
+- Serves REST API endpoints for the Android WildTrack app
+- Hosts a live browser preview at http://localhost:5000/preview
+"""
+
+import time
 import os
 import base64
 import threading
@@ -17,6 +27,7 @@ import numpy as np
 from flask import Flask, jsonify, request, Response, render_template_string
 from flask_cors import CORS
 from flask_bcrypt import Bcrypt
+from flask_jwt_extended import JWTManager, create_access_token, jwt_required, get_jwt_identity
 import pymongo
 
 # ─────────────────────────────────────────────
@@ -27,8 +38,10 @@ app = Flask(
     static_folder=os.path.join("dashboard", "build"),
     static_url_path="/"
 )
+app.config['JWT_SECRET_KEY'] = 'wildtrack-super-secret-key-change-in-prod'
 CORS(app)        # Fix: was placed after the first @app.route; must come before all routes
 bcrypt = Bcrypt(app)
+jwt = JWTManager(app)
 
 # ─────────────────────────────────────────────
 # MONGODB CONNECTION
@@ -415,6 +428,7 @@ def health():
 
 
 @app.route("/latest-alert", methods=["GET"])
+@jwt_required(optional=True)
 def get_latest_alert():
     cam_id = request.args.get("camera_id")
     with _alert_lock:
@@ -452,6 +466,7 @@ def get_latest_alert():
 
 
 @app.route("/register/camera", methods=["POST"])
+@jwt_required()
 def register_camera():
     data = request.get_json(force=True)
     camera_id = data.get("camera_id")
@@ -487,6 +502,7 @@ def register_camera():
 
 
 @app.route("/camera/detect", methods=["POST"])
+@jwt_required()
 def detect_from_camera():
     global latest_alert
     data      = request.get_json(force=True)
@@ -836,7 +852,7 @@ def api_register():
                 "password": hashed_pw,   # stored as bcrypt hash, not plaintext
                 "created_at": int(time.time())
             })
-            token = base64.b64encode(f"{email}:{int(time.time())}".encode()).decode()
+            token = create_access_token(identity=email.lower())
             return jsonify({
                 "status": "success",
                 "message": "User registered successfully",
@@ -846,7 +862,7 @@ def api_register():
         except Exception as e:
             return jsonify({"status": "error", "message": f"Database error: {e}"}), 500
     else:
-        token = base64.b64encode(f"{email}:{int(time.time())}".encode()).decode()
+        token = create_access_token(identity=email.lower())
         return jsonify({
             "status": "success",
             "message": "User registered (Mock Mode — no MongoDB)",
@@ -869,9 +885,7 @@ def api_login():
             # Fix: look up by email only, then verify password with bcrypt
             user_doc = db["users"].find_one({"email": email.lower()})
             if user_doc and bcrypt.check_password_hash(user_doc["password"], password):
-                token = base64.b64encode(
-                    f"{user_doc['email']}:{int(time.time())}".encode()
-                ).decode()
+                token = create_access_token(identity=user_doc['email'])
                 return jsonify({
                     "status": "success",
                     "token": token,
@@ -883,7 +897,7 @@ def api_login():
             return jsonify({"status": "error", "message": f"Database error: {e}"}), 500
     else:
         # Mock mode — no real user store, accept any credentials
-        token = base64.b64encode(f"{email}:{int(time.time())}".encode()).decode()
+        token = create_access_token(identity=email.lower())
         return jsonify({
             "status": "success",
             "token": token,
@@ -920,6 +934,7 @@ def api_contact():
 # ═══════════════════════════════════════════════
 
 @app.route("/api/cameras", methods=["GET"])
+@jwt_required()
 def api_get_cameras():
     if db_connected and db is not None:
         try:
@@ -973,6 +988,7 @@ def api_get_cameras():
 
 
 @app.route("/api/cameras", methods=["POST"])
+@jwt_required()
 def api_add_camera():
     data     = request.get_json(force=True)
     cam_id   = data.get("id")
@@ -1009,6 +1025,7 @@ def api_add_camera():
 
 
 @app.route("/api/cameras/<id>", methods=["PUT"])
+@jwt_required()
 def api_update_camera(id):
     data = request.get_json(force=True)
     if data.get("set_primary"):
@@ -1038,6 +1055,7 @@ def api_update_camera(id):
 
 
 @app.route("/api/cameras/<id>/control", methods=["POST"])
+@jwt_required()
 def api_camera_control(id):
     data = request.get_json(force=True) or {}
     action = data.get("action")
@@ -1064,6 +1082,7 @@ def api_camera_control(id):
 
 
 @app.route("/api/cameras/<id>", methods=["DELETE"])
+@jwt_required()
 def api_delete_camera(id):
     if db_connected and db is not None:
         try:
@@ -1082,6 +1101,7 @@ def api_delete_camera(id):
 # ═══════════════════════════════════════════════
 
 @app.route("/api/alerts", methods=["GET"])
+@jwt_required()
 def api_get_alerts():
     if db_connected and db is not None:
         try:
@@ -1095,6 +1115,7 @@ def api_get_alerts():
 
 
 @app.route("/api/system/status", methods=["GET"])
+@jwt_required(optional=True)
 def api_system_status():
     primary_id = _get_primary_camera_id()
     primary_name = primary_id
@@ -1135,6 +1156,7 @@ def api_system_status():
 
 
 @app.route("/api/system/settings", methods=["PUT"])
+@jwt_required()
 def api_system_settings():
     global system_settings
     data = request.get_json(force=True) or {}
@@ -1152,6 +1174,7 @@ def api_system_settings():
 
 
 @app.route("/api/alerts", methods=["DELETE"])
+@jwt_required()
 def api_clear_alerts():
     if db_connected and db is not None:
         try:
@@ -1164,10 +1187,29 @@ def api_clear_alerts():
 
 
 # ── Entry point ───────────────────────────────
+@app.route('/api/notify/email', methods=['POST'])
+@jwt_required(optional=True)  # Android background service uses JWT
+def send_email_notification():
+    try:
+        data = request.json
+        if not data or not data.get('to') or not data.get('subject') or not data.get('body'):
+            return jsonify({"status": "error", "message": "Missing required fields"}), 400
+            
+        # In a real production app, use smtplib or a service like SendGrid/AWS SES
+        print(f"\n[{datetime.now()}] [MOCK EMAIL DISPATCH]")
+        print(f"To: {data['to']}")
+        print(f"Subject: {data['subject']}")
+        print(f"Body:\n{data['body']}")
+        print("-------------------------------------------\n")
+        
+        return jsonify({"status": "success", "message": "Email dispatched successfully"}), 200
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
 if __name__ == "__main__":
     print("=" * 52)
     print("  WildTrack Animal Alert Server")
-    print("  API     →  http://0.0.0.0:5000")
-    print("  Preview →  http://localhost:5000/preview")
+    print("  API     →  https://0.0.0.0:5000")
+    print("  Preview →  https://localhost:5000/preview")
     print("=" * 52)
-    app.run(host="0.0.0.0", port=5000, debug=False, threaded=True)
+    app.run(host="0.0.0.0", port=5000, debug=False, threaded=True, ssl_context='adhoc')

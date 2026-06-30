@@ -65,7 +65,10 @@ export default function App() {
     }
   });
 
-  const serverBase = `http://${serverConfig.host}:${serverConfig.port}`;
+  // Use relative path in production (served by Flask) so the origin matches exactly,
+  // preventing CORS and SSL certificate mismatch errors when using IP addresses.
+  const isDev = window.location.port === '3000' || window.location.port === '3001';
+  const serverBase = isDev ? `https://${serverConfig.host}:${serverConfig.port}` : '';
   const alertHistoryRef = useRef(alertHistory);
   alertHistoryRef.current = alertHistory;
 

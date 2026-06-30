@@ -72,6 +72,7 @@ export default function Landing({ user, onLogin, onLogout, setPage }) {
       });
       const data = await response.json();
       if (response.ok && data.status === 'success') {
+        localStorage.setItem('wt_token', data.token);
         onLogin(data.user);
         setAuthModal(null);
         setAuthForm({ name: '', email: '', password: '', confirmPassword: '' });
@@ -121,6 +122,7 @@ export default function Landing({ user, onLogin, onLogout, setPage }) {
       });
       const data = await response.json();
       if (response.ok && data.status === 'success') {
+        localStorage.setItem('wt_token', data.token);
         setAuthSuccess('Account created successfully! Logging you in...');
         
         // Also save locally for fallback sync
