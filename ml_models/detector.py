@@ -16,7 +16,6 @@ import numpy as np
 DANGEROUS_ANIMALS = {
     "bear", "elephant", "wolf", "lion", "tiger",
     "leopard", "crocodile", "alligator", "snake",
-    "wild_boar", "cheetah", "hyena",
 }
 
 _MODEL_PATH = os.path.join(os.path.dirname(__file__), "best.pt")

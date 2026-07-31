@@ -9,16 +9,15 @@ import ServerConfig from './pages/ServerConfig';
 import MultiView from './pages/MultiView';
 import AndroidGuide from './pages/AndroidGuide';
 import CctvSetup from './pages/CctvSetup';
-import Landing from './pages/Landing';
 import { isDangerousDetection } from './utils/detection';
 import './App.css';
 import './pages/pages.css';
 
 const DEFAULT_CAMERAS = [
-  { id: 'CAM_WEBCAM', name: 'Webcam (Dev)', location: '18.5204,73.8567', place: 'Pune Office', type: 'webcam', status: 'active', rtspUrl: '', streamUrl: '', notes: 'Laptop webcam', addedAt: Date.now() - 86400000 * 3, is_primary: false, camera_number: 1 },
-  { id: 'CAM_01', name: 'North Perimeter', location: '18.5204,73.8567', place: 'Pune Office — North Gate', type: 'cctv', status: 'active', rtspUrl: '', streamUrl: '', notes: '', addedAt: Date.now() - 86400000 * 2, is_primary: true, camera_number: 2 },
-  { id: 'CAM_02', name: 'East Gate', location: '18.5250,73.8600', place: 'East Entrance', type: 'cctv', status: 'offline', rtspUrl: '', streamUrl: '', notes: '', addedAt: Date.now() - 86400000, is_primary: false, camera_number: 3 },
-  { id: 'CAM_03', name: 'South Boundary', location: '18.5190,73.8500', place: 'South Sensors', type: 'cctv', status: 'active', rtspUrl: '', streamUrl: '', notes: '', addedAt: Date.now(), is_primary: false, camera_number: 4 },
+  { id: 'CAM_WEBCAM', name: 'Webcam (Dev)', location: '18.5204,73.8567', place: 'Pune Office', type: 'webcam', status: 'active', rtspUrl: '', streamUrl: '', notes: 'Laptop webcam', addedAt: Date.now() - 86400000 * 3, is_primary: false },
+  { id: 'CAM_01', name: 'North Perimeter', location: '18.5204,73.8567', place: 'Pune Office — North Gate', type: 'cctv', status: 'active', rtspUrl: '', streamUrl: '', notes: '', addedAt: Date.now() - 86400000 * 2, is_primary: true },
+  { id: 'CAM_02', name: 'East Gate', location: '18.5250,73.8600', place: 'East Entrance', type: 'cctv', status: 'offline', rtspUrl: '', streamUrl: '', notes: '', addedAt: Date.now() - 86400000, is_primary: false },
+  { id: 'CAM_03', name: 'South Boundary', location: '18.5190,73.8500', place: 'South Sensors', type: 'cctv', status: 'active', rtspUrl: '', streamUrl: '', notes: '', addedAt: Date.now(), is_primary: false },
 ];
 
 function alertId(a, index) {
@@ -27,35 +26,7 @@ function alertId(a, index) {
 }
 
 export default function App() {
-  const [page, setPage] = useState(() => {
-    try {
-      return localStorage.getItem('wt_token') ? 'dashboard' : 'landing';
-    } catch {
-      return 'landing';
-    }
-  });
-
-  const [user, setUser] = useState(() => {
-    try {
-      const saved = localStorage.getItem('wt_user');
-      return saved ? JSON.parse(saved) : null;
-    } catch { return null; }
-  });
-
-  const handleLogin = (userData) => {
-    setUser(userData);
-    try { localStorage.setItem('wt_user', JSON.stringify(userData)); } catch { /* */ }
-  };
-
-  const handleLogout = () => {
-    setUser(null);
-    try {
-      localStorage.removeItem('wt_user');
-      localStorage.removeItem('wt_token');
-    } catch { /* */ }
-    setPage('landing');
-  };
-
+  const [page, setPage] = useState('dashboard');
   const [serverStatus, setServerStatus] = useState('unknown');
   const [latestAlert, setLatestAlert] = useState(null);
   const [systemStatus, setSystemStatus] = useState(null);
@@ -201,7 +172,7 @@ export default function App() {
         const r = await fetch(`${serverBase}/latest-alert${queryParam}`, { signal: AbortSignal.timeout(3000) });
         const d = await r.json();
         setLatestAlert(d);
-        if (d && d.animal_detected) {
+        if (isDangerousDetection(d)) {
           const hist = alertHistoryRef.current;
           const ts = d.timestamp > 1e12 ? Math.floor(d.timestamp / 1000) : d.timestamp;
           const isDup = hist.length > 0 &&
@@ -320,21 +291,6 @@ export default function App() {
     }
   }, [serverStatus, serverBase, syncCamerasFromServer, syncSystemStatus]);
 
-  const setWebcamIndex = useCallback(async (index) => {
-    if (serverStatus === 'online') {
-      try {
-        await fetch(`${serverBase}/api/system/settings`, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ webcam_index: index }),
-        });
-        await syncSystemStatus();
-      } catch { /* */ }
-    } else {
-      setSystemStatus((prev) => ({ ...prev, webcam_index: index }));
-    }
-  }, [serverStatus, serverBase, syncSystemStatus]);
-
   const setPrimaryCamera = useCallback(async (cameraId) => {
     if (serverStatus === 'online') {
       try {
@@ -379,7 +335,6 @@ export default function App() {
     cameraControl,
     setMonitoring,
     setDeploymentCity,
-    setWebcamIndex,
     setPrimaryCamera,
     clearAlerts,
     refreshAll,
@@ -402,13 +357,9 @@ export default function App() {
   };
   const PageComponent = pages[page] || Dashboard;
 
-  if (page === 'landing') {
-    return <Landing user={user} onLogin={handleLogin} onLogout={handleLogout} setPage={setPage} />;
-  }
-
   return (
     <div className="app-shell">
-      <Sidebar page={page} setPage={setPage} serverStatus={serverStatus} cameras={cameras} systemStatus={systemStatus} user={user} onLogout={handleLogout} />
+      <Sidebar page={page} setPage={setPage} serverStatus={serverStatus} cameras={cameras} systemStatus={systemStatus} />
       <div className="main-area">
         <TopBar page={page} serverStatus={serverStatus} latestAlert={latestAlert} systemStatus={systemStatus} personalPrimary={personalPrimary} effectivePrimary={effectivePrimary} cameras={cameras} />
         <main className="page-content">

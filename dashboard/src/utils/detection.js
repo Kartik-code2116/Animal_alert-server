@@ -9,9 +9,6 @@ const DANGEROUS_KEYWORDS = [
   'alligator',
   'snake',
   'cobra',
-  'wild_boar',
-  'cheetah',
-  'hyena',
 ];
 
 export function isDangerousDetection(alert) {

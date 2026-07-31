@@ -7,7 +7,6 @@ WildTrack Animal Alert Server
 - Hosts a live browser preview at http://localhost:5000/preview
 """
 
-from datetime import datetime
 import time
 """
 WildTrack Animal Alert Server
@@ -128,9 +127,7 @@ system_settings = {
     "monitoring_enabled": True,
     "active_detection_camera": "CAM_01",
     "deployment_city": "Pune",
-    "webcam_index": 0,
 }
-
 
 _settings_lock = threading.Lock()
 
@@ -265,10 +262,7 @@ def _get_active_camera_source():
     rtsp = camera_rtsp_urls.get(primary_id, "")
     if rtsp and rtsp.strip():
         return rtsp.strip()
-    # Fallback to local USB/webcam device
-    with _settings_lock:
-        return int(system_settings.get("webcam_index", 0))
-
+    return 0  # Fallback to webcam
 
 def _webcam_thread():
     global _latest_frame, _webcam_running
@@ -411,7 +405,7 @@ def _auto_detect_loop():
             latest_alert = new_alert
             latest_alerts_by_camera[cam_id] = new_alert
 
-        if new_alert["animal_detected"]:
+        if new_alert["dangerous"]:
             save_alert_to_db(new_alert)
 
 
@@ -551,7 +545,7 @@ def detect_from_camera():
                 "timestamp": int(time.time()),
                 "image": image_b64,
             }
-            if new_alert["animal_detected"]:
+            if is_dangerous:
                 save_alert_to_db(new_alert)
             message = "Dangerous wildlife detected!" if is_dangerous else "Safe detection."
         else:
@@ -717,17 +711,13 @@ def _mjpeg_generator(camera_id):
             if al_raw:
                 al = dict(al_raw)
         
-        is_hot_alert = al and al.get("animal_detected", False) and (time.time() - al["timestamp"] < 5)
+        is_hot_alert = al and al.get("dangerous", False) and (time.time() - al["timestamp"] < 5)
         
         if is_hot_alert:
-            is_dang = al.get("dangerous", False)
-            conf_val = round(al.get("confidence", 0.0), 1)
-            label = f"{'ALERT' if is_dang else 'DETECTION'}: {al['animal_type']} ({conf_val}%)"
-            color = (0, 0, 220) if is_dang else (0, 200, 0)
-            
-            cv2.rectangle(frame, (8, 8), (632, 472), color, 4)
-            cv2.rectangle(frame, (0, 0), (640, 45), color, -1)
-            cv2.putText(frame, f"{'WARNING: WILDLIFE' if is_dang else 'INFO: ANIMAL'} DETECTED - {label}", (20, 30),
+            label = f"ALERT: {al['animal_type']} ({int(al['confidence'] * 100)}%)"
+            cv2.rectangle(frame, (8, 8), (632, 472), (0, 0, 220), 4)
+            cv2.rectangle(frame, (0, 0), (640, 45), (0, 0, 200), -1)
+            cv2.putText(frame, f"WARNING: WILDLIFE DETECTED - {label}", (20, 30),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 255), 2)
         else:
             overlay_h = frame.copy()
@@ -1178,15 +1168,9 @@ def api_system_settings():
             system_settings["active_detection_camera"] = data["active_detection_camera"]
         if "deployment_city" in data and data["deployment_city"]:
             system_settings["deployment_city"] = str(data["deployment_city"]).strip()
-        if "webcam_index" in data:
-            try:
-                system_settings["webcam_index"] = int(data["webcam_index"])
-            except Exception:
-                pass
 
     _save_settings_to_db()
     return jsonify({"status": "success", "settings": dict(system_settings)})
-
 
 
 @app.route("/api/alerts", methods=["DELETE"])

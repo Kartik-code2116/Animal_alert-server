@@ -147,14 +147,9 @@ export default function Dashboard({ serverStatus, latestAlert, alertHistory, cam
                 <Camera size={32} />
                 <p>Feed unavailable</p>
               </div>
-              {latestAlert?.animal_detected && (
-                <div 
-                  className="live-overlay-badge"
-                  style={{
-                    background: isDangerous ? 'rgba(239, 68, 68, 0.9)' : 'rgba(34, 197, 94, 0.9)'
-                  }}
-                >
-                  {isDangerous ? <AlertTriangle size={12} /> : <CheckCircle size={12} />}
+              {isDangerous && (
+                <div className="live-overlay-badge">
+                  <AlertTriangle size={12} />
                   {latestAlert.animal_type} — {latestAlert.confidence}%
                 </div>
               )}
