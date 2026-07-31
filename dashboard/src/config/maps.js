@@ -1,6 +1,6 @@
 /** Same key as Android app — set in dashboard/.env (not committed) */
 export const GOOGLE_MAPS_API_KEY =
-  process.env.REACT_APP_GOOGLE_MAPS_API_KEY || '';
+  process.env.REACT_APP_GOOGLE_MAPS_API_KEY || 'AIzaSyBSAVqEE0dR5hKQGdZov33djH9DUNJKDtc';
 
 export const DEFAULT_MAP_CENTER = { lat: 18.5204, lng: 73.8567 };
 

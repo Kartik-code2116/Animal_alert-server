@@ -3,7 +3,7 @@ import { Save, RefreshCw, CheckCircle, Database, Activity } from 'lucide-react';
 
 export default function ServerConfig({
   serverConfig, setServerConfig, cameras, systemStatus,
-  serverStatus, serverBase, setPrimaryCamera, setMonitoring, setDeploymentCity, refreshAll,
+  serverStatus, serverBase, setPrimaryCamera, setMonitoring, setDeploymentCity, setWebcamIndex, refreshAll,
 }) {
   const [local, setLocal] = useState({ ...serverConfig });
   const [saved, setSaved] = useState(false);
@@ -77,6 +77,35 @@ export default function ServerConfig({
               ))}
             </select>
           </div>
+
+          <div className="form-group">
+            <label className="form-label">USB / Webcam Index (OpenCV)</label>
+            <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+              Used when the <b>primary camera</b> has no RTSP URL.
+              Try 0 (laptop cam), 1 (USB cam), 2…
+            </span>
+            <div style={{ display: 'flex', gap: 8, marginTop: 6 }}>
+              <input
+                className="form-input"
+                type="number"
+                min={0}
+                value={local?.webcam_index ?? systemStatus?.webcam_index ?? 0}
+                onChange={(e) => setLocal(l => ({ ...l, webcam_index: Number(e.target.value) }))}
+                disabled={serverStatus !== 'online'}
+              />
+              <button
+                className="btn btn-sm btn-primary"
+                onClick={() => {
+                  setServerConfig(local);
+                  if (setWebcamIndex) setWebcamIndex(local.webcam_index);
+                }}
+                disabled={serverStatus !== 'online'}
+              >
+                Save index
+              </button>
+            </div>
+          </div>
+
           <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
             <button
               className={`btn btn-sm ${monitoringOn ? 'btn-danger' : 'btn-primary'}`}
@@ -90,6 +119,7 @@ export default function ServerConfig({
             </button>
           </div>
         </div>
+
 
         <div className="card">
           <div className="section-header" style={{ marginBottom: 16 }}><h2>Poll Intervals</h2></div>
