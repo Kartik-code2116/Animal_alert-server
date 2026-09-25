@@ -32,8 +32,8 @@ export default function Sidebar({ page, setPage, serverStatus, cameras, user, on
           <Shield size={18} strokeWidth={2.5}/>
         </div>
         <div>
-          <div className="brand-name">WildTrack</div>
-          <div className="brand-sub">Animal Alert System</div>
+          <div className="brand-name">Gov Command</div>
+          <div className="brand-sub">National Wildlife Dept</div>
         </div>
       </div>
 

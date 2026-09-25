@@ -466,7 +466,7 @@ def get_latest_alert():
 
 
 @app.route("/register/camera", methods=["POST"])
-@jwt_required()
+@jwt_required(optional=True)
 def register_camera():
     data = request.get_json(force=True)
     camera_id = data.get("camera_id")
@@ -502,7 +502,7 @@ def register_camera():
 
 
 @app.route("/camera/detect", methods=["POST"])
-@jwt_required()
+@jwt_required(optional=True)
 def detect_from_camera():
     global latest_alert
     data      = request.get_json(force=True)
@@ -934,7 +934,7 @@ def api_contact():
 # ═══════════════════════════════════════════════
 
 @app.route("/api/cameras", methods=["GET"])
-@jwt_required()
+@jwt_required(optional=True)
 def api_get_cameras():
     if db_connected and db is not None:
         try:
@@ -988,7 +988,7 @@ def api_get_cameras():
 
 
 @app.route("/api/cameras", methods=["POST"])
-@jwt_required()
+@jwt_required(optional=True)
 def api_add_camera():
     data     = request.get_json(force=True)
     cam_id   = data.get("id")
@@ -1025,7 +1025,7 @@ def api_add_camera():
 
 
 @app.route("/api/cameras/<id>", methods=["PUT"])
-@jwt_required()
+@jwt_required(optional=True)
 def api_update_camera(id):
     data = request.get_json(force=True)
     if data.get("set_primary"):
@@ -1055,7 +1055,7 @@ def api_update_camera(id):
 
 
 @app.route("/api/cameras/<id>/control", methods=["POST"])
-@jwt_required()
+@jwt_required(optional=True)
 def api_camera_control(id):
     data = request.get_json(force=True) or {}
     action = data.get("action")
@@ -1082,7 +1082,7 @@ def api_camera_control(id):
 
 
 @app.route("/api/cameras/<id>", methods=["DELETE"])
-@jwt_required()
+@jwt_required(optional=True)
 def api_delete_camera(id):
     if db_connected and db is not None:
         try:
@@ -1101,7 +1101,7 @@ def api_delete_camera(id):
 # ═══════════════════════════════════════════════
 
 @app.route("/api/alerts", methods=["GET"])
-@jwt_required()
+@jwt_required(optional=True)
 def api_get_alerts():
     if db_connected and db is not None:
         try:
@@ -1156,7 +1156,7 @@ def api_system_status():
 
 
 @app.route("/api/system/settings", methods=["PUT"])
-@jwt_required()
+@jwt_required(optional=True)
 def api_system_settings():
     global system_settings
     data = request.get_json(force=True) or {}
@@ -1174,7 +1174,7 @@ def api_system_settings():
 
 
 @app.route("/api/alerts", methods=["DELETE"])
-@jwt_required()
+@jwt_required(optional=True)
 def api_clear_alerts():
     if db_connected and db is not None:
         try:
