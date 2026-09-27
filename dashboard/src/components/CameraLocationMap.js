@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback } from 'react';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { MapPin } from 'lucide-react';
 import {
   GOOGLE_MAPS_API_KEY,
@@ -62,7 +62,6 @@ function loadGoogleMaps() {
   return mapsLoadPromise;
 }
 
-/** Single draggable marker — add/edit one camera */
 export function CameraLocationMap({ location, onLocationChange, height = 240, camera }) {
   const mapDivRef = useRef(null);
   const mapRef = useRef(null);
@@ -85,39 +84,39 @@ export function CameraLocationMap({ location, onLocationChange, height = 240, ca
     if (!ready || !mapDivRef.current || !mapsApiReady()) return;
 
     try {
-    const pos = parseLocation(location);
-    const g = window.google.maps;
-    const markerOpts = camera
-      ? numberedMarkerOptions({ ...camera, location })
-      : { draggable: true, title: 'Drag pin to set camera location' };
+      const pos = parseLocation(location);
+      const g = window.google.maps;
+      const markerOpts = camera
+        ? numberedMarkerOptions({ ...camera, location })
+        : { draggable: true, title: 'Drag pin to set camera location' };
 
-    if (!mapRef.current) {
-      mapRef.current = new g.Map(mapDivRef.current, {
-        center: pos,
-        zoom: 16,
-        mapTypeControl: false,
-        streetViewControl: false,
-        fullscreenControl: true,
-      });
-      markerRef.current = new g.Marker({
-        position: pos,
-        map: mapRef.current,
-        draggable: true,
-        ...markerOpts,
-      });
-      markerRef.current.addListener('dragend', () => {
-        const p = markerRef.current.getPosition();
-        onLocationChangeRef.current(formatLocation(p.lat(), p.lng()));
-      });
-      mapRef.current.addListener('click', (e) => {
-        markerRef.current.setPosition(e.latLng);
-        onLocationChangeRef.current(formatLocation(e.latLng.lat(), e.latLng.lng()));
-      });
-    } else {
-      mapRef.current.setCenter(pos);
-      markerRef.current.setPosition(pos);
-      if (camera) markerRef.current.setOptions(numberedMarkerOptions({ ...camera, location }));
-    }
+      if (!mapRef.current) {
+        mapRef.current = new g.Map(mapDivRef.current, {
+          center: pos,
+          zoom: 16,
+          mapTypeControl: false,
+          streetViewControl: false,
+          fullscreenControl: true,
+        });
+        markerRef.current = new g.Marker({
+          position: pos,
+          map: mapRef.current,
+          draggable: true,
+          ...markerOpts,
+        });
+        markerRef.current.addListener('dragend', () => {
+          const p = markerRef.current.getPosition();
+          onLocationChangeRef.current(formatLocation(p.lat(), p.lng()));
+        });
+        mapRef.current.addListener('click', (e) => {
+          markerRef.current.setPosition(e.latLng);
+          onLocationChangeRef.current(formatLocation(e.latLng.lat(), e.latLng.lng()));
+        });
+      } else {
+        mapRef.current.setCenter(pos);
+        markerRef.current.setPosition(pos);
+        if (camera) markerRef.current.setOptions(numberedMarkerOptions({ ...camera, location }));
+      }
     } catch (err) {
       console.error('CameraLocationMap: init failed', err);
       setError(err?.message || 'Map failed to load');
@@ -147,7 +146,117 @@ export function CameraLocationMap({ location, onLocationChange, height = 240, ca
   );
 }
 
-/** All cameras — numbered pins, click to edit */
+export function AreaPolygonMap({ coordinates = [], onCoordinatesChange, height = 240 }) {
+  const mapDivRef = useRef(null);
+  const mapRef = useRef(null);
+  const polygonRef = useRef(null);
+  const markersRef = useRef([]);
+  const [ready, setReady] = useState(false);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    loadGoogleMaps()
+      .then(() => { if (!cancelled) setReady(true); })
+      .catch((e) => { if (!cancelled) setError(e.message); });
+    return () => { cancelled = true; };
+  }, []);
+
+  const clearDrawing = useCallback(() => {
+    if (polygonRef.current) polygonRef.current.setMap(null);
+    markersRef.current.forEach(m => m.setMap(null));
+    markersRef.current = [];
+    onCoordinatesChange([]);
+  }, [onCoordinatesChange]);
+
+  useEffect(() => {
+    if (!ready || !mapDivRef.current || !mapsApiReady()) return;
+
+    try {
+      const g = window.google.maps;
+      
+      if (!mapRef.current) {
+        mapRef.current = new g.Map(mapDivRef.current, {
+          center: coordinates.length > 0 ? coordinates[0] : DEFAULT_MAP_CENTER,
+          zoom: 13,
+          mapTypeControl: false,
+          streetViewControl: false,
+          fullscreenControl: true,
+        });
+
+        mapRef.current.addListener('click', (e) => {
+          const newCoord = { lat: e.latLng.lat(), lng: e.latLng.lng() };
+          onCoordinatesChange([...coordinates, newCoord]);
+        });
+      }
+
+      // Sync visual polygon with coordinates prop
+      if (polygonRef.current) polygonRef.current.setMap(null);
+      markersRef.current.forEach(m => m.setMap(null));
+      markersRef.current = [];
+
+      if (coordinates.length > 0) {
+        polygonRef.current = new g.Polygon({
+          paths: coordinates,
+          strokeColor: '#3b82f6',
+          strokeOpacity: 0.8,
+          strokeWeight: 2,
+          fillColor: '#3b82f6',
+          fillOpacity: 0.35,
+          map: mapRef.current,
+        });
+
+        coordinates.forEach((coord, idx) => {
+          const marker = new g.Marker({
+            position: coord,
+            map: mapRef.current,
+            icon: {
+              path: g.SymbolPath.CIRCLE,
+              fillColor: '#ffffff',
+              fillOpacity: 1,
+              strokeColor: '#3b82f6',
+              strokeWeight: 2,
+              scale: 5,
+            },
+            title: `Point ${idx + 1}`
+          });
+          markersRef.current.push(marker);
+        });
+      }
+    } catch (err) {
+      setError(err?.message || 'Map failed to load');
+    }
+  }, [ready, coordinates, onCoordinatesChange]);
+
+  if (error) {
+    return (
+      <div className="camera-map-error">
+        <MapPin size={14} />
+        <span>{error}. Set REACT_APP_GOOGLE_MAPS_API_KEY</span>
+      </div>
+    );
+  }
+
+  return (
+    <div className="camera-map-wrap" style={{ position: 'relative' }}>
+      <div ref={mapDivRef} className="camera-map-canvas" style={{ height }} />
+      {!ready && <div className="camera-map-loading">Loading map…</div>}
+      
+      <div style={{ position: 'absolute', top: 10, right: 10, zIndex: 10 }}>
+        <button 
+          onClick={(e) => { e.preventDefault(); clearDrawing(); }}
+          style={{ background: 'white', color: '#ef4444', border: '1px solid #ef4444', padding: '4px 10px', borderRadius: 4, cursor: 'pointer', fontSize: 12, fontWeight: 'bold' }}
+        >
+          Clear Area
+        </button>
+      </div>
+      <p className="camera-map-hint" style={{ marginTop: '8px' }}>
+        Click on the map to place boundary points. Place 3 or more points to define your Area.
+      </p>
+    </div>
+  );
+}
+
 export function AllCamerasMap({ cameras, selectedId, onSelectCamera, height = 320, city }) {
   const mapDivRef = useRef(null);
   const mapRef = useRef(null);

@@ -1,4 +1,4 @@
-import { Camera, LayoutDashboard, Bell, Settings, Server, Wifi, WifiOff, ChevronRight, Shield, Grid, Smartphone, BookOpen, Home, LogOut } from 'lucide-react';
+import { Camera, LayoutDashboard, Bell, Settings, Server, Wifi, WifiOff, ChevronRight, Shield, Grid, Smartphone, BookOpen, Home, LogOut, Users } from 'lucide-react';
 import './Sidebar.css';
 
 const NAV = [
@@ -7,6 +7,7 @@ const NAV = [
   { id: 'cameras',   label: 'Cameras',        icon: Camera },
   { id: 'alerts',    label: 'Alert History',  icon: Bell },
   { id: 'cctvsetup', label: 'CCTV Setup',     icon: BookOpen },
+  { id: 'users',     label: 'Personnel',      icon: Users },
   { id: 'android',   label: 'Android App',    icon: Smartphone },
   { id: 'server',    label: 'Server Config',  icon: Server },
   { id: 'settings',  label: 'Settings',       icon: Settings },
@@ -15,7 +16,7 @@ const NAV = [
 
 const NAV_SECTIONS = [
   { label: 'Monitoring',  ids: ['dashboard', 'multiview', 'alerts'], roles: ['USER', 'AREA_ADMIN', 'AGENCY_ADMIN'] },
-  { label: 'Management',  ids: ['cameras', 'cctvsetup'], roles: ['AREA_ADMIN', 'AGENCY_ADMIN'] },
+  { label: 'Management',  ids: ['cameras', 'cctvsetup', 'users'], roles: ['AREA_ADMIN', 'AGENCY_ADMIN'] },
   { label: 'Setup',       ids: ['android', 'server', 'settings'], roles: ['AGENCY_ADMIN'] },
   { label: 'Portal',      ids: ['landing'], roles: ['USER', 'AREA_ADMIN', 'AGENCY_ADMIN'] },
 ];

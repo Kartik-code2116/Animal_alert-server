@@ -10,6 +10,7 @@ import MultiView from './pages/MultiView';
 import AndroidGuide from './pages/AndroidGuide';
 import CctvSetup from './pages/CctvSetup';
 import Landing from './pages/Landing';
+import UsersManagement from './pages/UsersManagement';
 import { isDangerousDetection } from './utils/detection';
 import './App.css';
 import './pages/pages.css';
@@ -371,6 +372,7 @@ export default function App() {
     cameras: Cameras,
     alerts: Alerts,
     cctvsetup: CctvSetup,
+    users: UsersManagement,
     android: AndroidGuide,
     server: ServerConfig,
     settings: Settings,
