@@ -6,6 +6,7 @@ import {
   ShieldAlert, Activity, Users, Send, Info, Key, LogOut
 } from 'lucide-react';
 import './Landing.css';
+import { CameraLocationMap } from '../components/CameraLocationMap';
 
 export default function Landing({ user, onLogin, onLogout, setPage }) {
   // Navigation & UI States
@@ -98,7 +99,7 @@ export default function Landing({ user, onLogin, onLogout, setPage }) {
 
   const handleSignupSubmit = async (e) => {
     e.preventDefault();
-    const { name, email, password, confirmPassword } = authForm;
+    const { name, email, password, confirmPassword, role, country, state, district, areaLocation } = authForm;
 
     if (!name || !email || !password || !confirmPassword) {
       setAuthError('Please fill in all fields');
@@ -118,7 +119,7 @@ export default function Landing({ user, onLogin, onLogout, setPage }) {
       const response = await fetch('/api/auth/register', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, email, password })
+        body: JSON.stringify({ name, email, password, role: role || 'USER', country, state, district, areaLocation })
       });
       const data = await response.json();
       if (response.ok && data.status === 'success') {
@@ -129,7 +130,7 @@ export default function Landing({ user, onLogin, onLogout, setPage }) {
         try {
           const users = JSON.parse(localStorage.getItem('wt_users') || '[]');
           if (!users.find(u => u.email.toLowerCase() === email.toLowerCase())) {
-            users.push({ name, email, password });
+            users.push({ name, email, password, role: role || 'USER', country, state, district, areaLocation });
             localStorage.setItem('wt_users', JSON.stringify(users));
           }
         } catch (e) {
@@ -158,7 +159,7 @@ export default function Landing({ user, onLogin, onLogout, setPage }) {
         return;
       }
 
-      const newUser = { name, email, password };
+      const newUser = { name, email, password, role: role || 'USER', country, state, district, areaLocation };
       users.push(newUser);
       try {
         localStorage.setItem('wt_users', JSON.stringify(users));
@@ -1177,8 +1178,70 @@ export default function Landing({ user, onLogin, onLogout, setPage }) {
                       />
                     </div>
                   </div>
+                  <div className="form-group">
+                    <label className="form-label">Deployment Role</label>
+                    <select 
+                      name="role"
+                      className="form-select" 
+                      value={authForm.role || 'USER'}
+                      onChange={handleAuthInputChange}
+                      style={{width: '100%'}}
+                    >
+                      <option value="USER">App User / Resident</option>
+                      <option value="AREA_ADMIN">Area Admin (Local Scope)</option>
+                      <option value="AGENCY_ADMIN">Central Agency Admin (District Scope)</option>
+                    </select>
+                  </div>
 
-                  <button type="submit" className="btn btn-primary btn-glow w-100 justify-center auth-btn">
+                  {authForm.role && authForm.role !== 'USER' && (
+                    <div className="form-group animate-fade" style={{marginTop: 15}}>
+                      <label className="form-label">Deployment Region</label>
+                      <div style={{display: 'flex', gap: '8px', marginBottom: '8px'}}>
+                        <input 
+                          name="country"
+                          type="text" 
+                          className="form-input" 
+                          placeholder="Country"
+                          value={authForm.country || ''}
+                          onChange={handleAuthInputChange}
+                          required
+                        />
+                        <input 
+                          name="state"
+                          type="text" 
+                          className="form-input" 
+                          placeholder="State"
+                          value={authForm.state || ''}
+                          onChange={handleAuthInputChange}
+                          required
+                        />
+                      </div>
+                      <input 
+                        name="district"
+                        type="text" 
+                        className="form-input" 
+                        placeholder="District / County"
+                        value={authForm.district || ''}
+                        onChange={handleAuthInputChange}
+                        required
+                        style={{marginBottom: '15px'}}
+                      />
+                      
+                      <label className="form-label">Control Area Coordinates (Drop Pin)</label>
+                      <div style={{border: '1px solid var(--border)', borderRadius: '8px', overflow: 'hidden'}}>
+                        <CameraLocationMap 
+                          location={authForm.areaLocation || '18.5204,73.8567'} 
+                          onLocationChange={(loc) => setAuthForm({ ...authForm, areaLocation: loc })}
+                          height={200}
+                        />
+                      </div>
+                      <div style={{fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px'}}>
+                        Selected Coordinates: {authForm.areaLocation || '18.5204,73.8567'}
+                      </div>
+                    </div>
+                  )}
+
+                  <button type="submit" className="btn btn-primary btn-glow w-100 justify-center auth-btn" style={{marginTop: 20}}>
                     <span>Initialize System Console</span>
                     <ArrowRight size={14}/>
                   </button>

@@ -14,10 +14,10 @@ const NAV = [
 ];
 
 const NAV_SECTIONS = [
-  { label: 'Monitoring',  ids: ['dashboard', 'multiview', 'alerts'] },
-  { label: 'Management',  ids: ['cameras', 'cctvsetup'] },
-  { label: 'Setup',       ids: ['android', 'server', 'settings'] },
-  { label: 'Portal',      ids: ['landing'] },
+  { label: 'Monitoring',  ids: ['dashboard', 'multiview', 'alerts'], roles: ['USER', 'AREA_ADMIN', 'AGENCY_ADMIN'] },
+  { label: 'Management',  ids: ['cameras', 'cctvsetup'], roles: ['AREA_ADMIN', 'AGENCY_ADMIN'] },
+  { label: 'Setup',       ids: ['android', 'server', 'settings'], roles: ['AGENCY_ADMIN'] },
+  { label: 'Portal',      ids: ['landing'], roles: ['USER', 'AREA_ADMIN', 'AGENCY_ADMIN'] },
 ];
 
 export default function Sidebar({ page, setPage, serverStatus, cameras, user, onLogout }) {
@@ -52,7 +52,7 @@ export default function Sidebar({ page, setPage, serverStatus, cameras, user, on
 
       {/* Nav with sections */}
       <nav className="sidebar-nav">
-        {NAV_SECTIONS.map(section => (
+        {NAV_SECTIONS.filter(section => !user || section.roles.includes(user.role)).map(section => (
           <div key={section.label}>
             <div className="nav-section-label">{section.label}</div>
             {NAV.filter(n => section.ids.includes(n.id)).map(({ id, label, icon: Icon }) => (
@@ -81,7 +81,7 @@ export default function Sidebar({ page, setPage, serverStatus, cameras, user, on
           </div>
           <div className="user-meta">
             <div className="user-name">{user.name || 'Operator'}</div>
-            <div className="user-role">Console Admin</div>
+            <div className="user-role">{user.role === 'AGENCY_ADMIN' ? 'District Admin' : user.role === 'AREA_ADMIN' ? 'Area Admin' : 'App User'}</div>
           </div>
           <button className="user-logout-btn" onClick={onLogout} title="Log Out">
             <LogOut size={14}/>

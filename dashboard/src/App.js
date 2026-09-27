@@ -9,6 +9,7 @@ import ServerConfig from './pages/ServerConfig';
 import MultiView from './pages/MultiView';
 import AndroidGuide from './pages/AndroidGuide';
 import CctvSetup from './pages/CctvSetup';
+import Landing from './pages/Landing';
 import { isDangerousDetection } from './utils/detection';
 import './App.css';
 import './pages/pages.css';
@@ -26,7 +27,26 @@ function alertId(a, index) {
 }
 
 export default function App() {
-  const [page, setPage] = useState('dashboard');
+  const [user, setUser] = useState(() => {
+    try {
+      const saved = localStorage.getItem('wt_current_user');
+      return saved ? JSON.parse(saved) : null;
+    } catch { return null; }
+  });
+
+  const handleLogin = (u) => {
+    setUser(u);
+    localStorage.setItem('wt_current_user', JSON.stringify(u));
+  };
+  
+  const handleLogout = () => {
+    setUser(null);
+    localStorage.removeItem('wt_current_user');
+    localStorage.removeItem('wt_token');
+    setPage('landing');
+  };
+
+  const [page, setPage] = useState(user ? 'dashboard' : 'landing');
   const [serverStatus, setServerStatus] = useState('unknown');
   const [latestAlert, setLatestAlert] = useState(null);
   const [systemStatus, setSystemStatus] = useState(null);
@@ -357,13 +377,17 @@ export default function App() {
   };
   const PageComponent = pages[page] || Dashboard;
 
+  if (!user || page === 'landing') {
+    return <Landing user={user} onLogin={handleLogin} onLogout={handleLogout} setPage={setPage} />;
+  }
+
   return (
     <div className="app-shell">
-      <Sidebar page={page} setPage={setPage} serverStatus={serverStatus} cameras={cameras} systemStatus={systemStatus} />
+      <Sidebar user={user} onLogout={handleLogout} page={page} setPage={setPage} serverStatus={serverStatus} cameras={cameras} systemStatus={systemStatus} />
       <div className="main-area">
-        <TopBar page={page} serverStatus={serverStatus} latestAlert={latestAlert} systemStatus={systemStatus} personalPrimary={personalPrimary} effectivePrimary={effectivePrimary} cameras={cameras} />
+        <TopBar user={user} page={page} serverStatus={serverStatus} latestAlert={latestAlert} systemStatus={systemStatus} personalPrimary={personalPrimary} effectivePrimary={effectivePrimary} cameras={cameras} />
         <main className="page-content">
-          <PageComponent {...props} />
+          <PageComponent {...props} user={user} />
         </main>
       </div>
     </div>

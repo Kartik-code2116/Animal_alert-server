@@ -1,4 +1,4 @@
-import { AlertTriangle, CheckCircle, RefreshCw } from 'lucide-react';
+import { AlertTriangle, CheckCircle, RefreshCw, Shield } from 'lucide-react';
 import { isDangerousDetection } from '../utils/detection';
 import './TopBar.css';
 
@@ -24,7 +24,7 @@ const PAGE_SUBS = {
   settings:   'Preferences & project config',
 };
 
-export default function TopBar({ page, serverStatus, latestAlert, systemStatus, personalPrimary, effectivePrimary, cameras }) {
+export default function TopBar({ user, page, serverStatus, latestAlert, systemStatus, personalPrimary, effectivePrimary, cameras }) {
   const mon = systemStatus?.monitoring_enabled !== false;
   const camStats = systemStatus?.cameras;
   const city = systemStatus?.deployment_city;
@@ -47,6 +47,15 @@ export default function TopBar({ page, serverStatus, latestAlert, systemStatus, 
         <span className="topbar-sub">{PAGE_SUBS[page] || ''}</span>
       </div>
       <div className="topbar-right">
+        {user && (
+          <div className="topbar-alert-chip" style={{ background: 'rgba(59,130,246,0.15)', color: '#60a5fa' }}>
+            <Shield size={13}/>
+            <span>{user.role === 'AGENCY_ADMIN' ? 'AGENCY ADMIN' : user.role === 'AREA_ADMIN' ? 'AREA ADMIN' : 'USER'}</span>
+            <span className="chip-time" style={{color: '#93c5fd'}}>
+              {user.district ? ` · ${user.district}` : ''}
+            </span>
+          </div>
+        )}
         {badge && (
           <div className="topbar-alert-chip" style={{ background: mon ? 'rgba(52,211,153,0.12)' : 'rgba(251,191,36,0.12)', color: mon ? 'var(--success)' : 'var(--warn)' }}>
             <span>{badge}</span>

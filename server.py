@@ -426,6 +426,122 @@ def serve_index():
 def health():
     return jsonify({"status": "healthy"})
 
+# ─────────────────────────────────────────────
+# AUTHENTICATION
+# ─────────────────────────────────────────────
+@app.route("/api/auth/register", methods=["POST"])
+def auth_register():
+    if not db_connected or db is None:
+        return jsonify({"status": "error", "message": "Database not connected"}), 500
+    
+    data = request.get_json(force=True)
+    email = data.get("email")
+    password = data.get("password")
+    name = data.get("name")
+    role = data.get("role", "USER")
+    country = data.get("country", "")
+    state = data.get("state", "")
+    district = data.get("district", "")
+    areaLocation = data.get("areaLocation", "")
+    
+    if not email or not password:
+        return jsonify({"status": "error", "message": "Email and password required"}), 400
+        
+    if db["users"].find_one({"email": email.lower()}):
+        return jsonify({"status": "error", "message": "User already exists"}), 400
+        
+    hashed = bcrypt.generate_password_hash(password).decode('utf-8')
+    user_doc = {
+        "email": email.lower(),
+        "password": hashed,
+        "name": name,
+        "role": role,
+        "country": country,
+        "state": state,
+        "district": district,
+        "areaLocation": areaLocation,
+        "created_at": int(time.time())
+    }
+    
+    db["users"].insert_one(user_doc)
+    
+    access_token = create_access_token(identity={"email": email.lower(), "role": role, "district": district, "areaLocation": areaLocation})
+    user_doc.pop("password", None)
+    user_doc.pop("_id", None)
+    
+    return jsonify({"status": "success", "token": access_token, "user": user_doc})
+
+@app.route("/api/auth/login", methods=["POST"])
+def auth_login():
+    if not db_connected or db is None:
+        return jsonify({"status": "error", "message": "Database not connected"}), 500
+        
+    data = request.get_json(force=True)
+    email = data.get("email", "").lower()
+    password = data.get("password", "")
+    
+    user = db["users"].find_one({"email": email})
+    if not user or not bcrypt.check_password_hash(user["password"], password):
+        return jsonify({"status": "error", "message": "Invalid email or password"}), 401
+        
+    access_token = create_access_token(identity={"email": email, "role": user.get("role"), "district": user.get("district"), "areaLocation": user.get("areaLocation")})
+    user.pop("password", None)
+    user.pop("_id", None)
+    
+    return jsonify({"status": "success", "token": access_token, "user": user})
+
+@app.route("/api/users", methods=["GET"])
+@jwt_required()
+def get_managed_users():
+    if not db_connected or db is None:
+        return jsonify({"status": "error", "message": "Database not connected"}), 500
+        
+    identity = get_jwt_identity()
+    role = identity.get("role")
+    district = identity.get("district")
+    areaLocation = identity.get("areaLocation")
+    
+    query = {}
+    if role == "AGENCY_ADMIN":
+        # Agency Admins can see Area Admins in their district
+        query = {"role": "AREA_ADMIN", "district": district}
+    elif role == "AREA_ADMIN":
+        # Area Admins can see regular App Users in their area
+        # We could match strictly on district, but for simplicity let's match on the areaLocation or district
+        query = {"role": "USER", "district": district}
+    else:
+        # Regular users cannot manage anyone
+        return jsonify([]), 403
+        
+    users = list(db["users"].find(query, {"password": 0}))
+    for u in users:
+        u["_id"] = str(u["_id"])
+        
+    return jsonify(users)
+
+@app.route("/api/users/<user_email>", methods=["DELETE"])
+@jwt_required()
+def delete_managed_user(user_email):
+    if not db_connected or db is None:
+        return jsonify({"status": "error", "message": "Database not connected"}), 500
+        
+    identity = get_jwt_identity()
+    role = identity.get("role")
+    district = identity.get("district")
+    
+    # Simple check: verify the user to be deleted belongs to the caller's district
+    target_user = db["users"].find_one({"email": user_email})
+    if not target_user:
+        return jsonify({"status": "error", "message": "User not found"}), 404
+        
+    if role == "AGENCY_ADMIN" and target_user.get("role") == "AREA_ADMIN" and target_user.get("district") == district:
+        db["users"].delete_one({"email": user_email})
+        return jsonify({"status": "success"})
+    elif role == "AREA_ADMIN" and target_user.get("role") == "USER" and target_user.get("district") == district:
+        db["users"].delete_one({"email": user_email})
+        return jsonify({"status": "success"})
+        
+    return jsonify({"status": "error", "message": "Unauthorized"}), 403
 
 @app.route("/latest-alert", methods=["GET"])
 @jwt_required(optional=True)
