@@ -1,16 +1,40 @@
-# 🐾 WildTrack: Wild Animal Alert System
+# 🐾 WildTrack: Advanced Wild Animal Alert System
 
-WildTrack is a modern, end-to-end wild animal detection and alert system designed to monitor perimeters, identify dangerous wildlife, and dispatch instant notifications to monitoring dashboards and mobile applications. It integrates a lightweight Flask backend, an OpenCV webcam/CCTV feed ingestion pipeline, a custom-trained YOLOv8 computer vision model, a React administrative dashboard, and an Android client application.
+WildTrack is a modern, end-to-end wild animal detection and alert system designed to monitor perimeters, identify dangerous wildlife, and dispatch instant notifications to monitoring dashboards and mobile applications. It integrates a lightweight Flask backend, an OpenCV webcam/CCTV feed ingestion pipeline, a custom-trained YOLOv8 computer vision model, a beautiful React administrative dashboard, and an Android client application.
+
+Recently upgraded, WildTrack now features a **robust three-tier Hierarchical Role-Based Access Control (RBAC)** system designed for state-wide and district-level governance of wildlife security.
+
+---
+
+## 🔐 Hierarchical Command Architecture
+
+WildTrack enforces strict geographic and role-based data isolation mirroring real-world wildlife agency structures:
+
+```mermaid
+graph TD
+    A["🟣 Central Agency Admin"] -->|"Controls state-wide"| B["🔵 Area Controller"]
+    A -->|"Can revoke access"| B
+    B -->|"Controls district"| C["🟢 App User / Resident"]
+    B -->|"Can revoke access"| C
+    
+    A -->|"Sees ALL cameras"| D["📷 CCTV Network"]
+    B -->|"Sees area cameras"| D
+    C -->|"View-only alerts"| D
+```
+
+### Role Definitions
+
+| Role | Scope | Dashboard Access | Capabilities |
+|------|-------|-----------------|--------------|
+| **🟣 Central Agency Admin** | Entire State | Full Access | Manage all state-wide Area Controllers & App Users, full camera network control, server config. |
+| **🔵 Area Controller** | Specific District | Management | Manage district-level App Users, monitor district cameras, manage local alerts. |
+| **🟢 App User / Resident**| Local Zone | View-Only | View live dashboard, alert history, receive notifications. No management permissions. |
 
 ---
 
 ## 📸 System Flowchart Overview
 
-### 1. Visual Flowchart
-A high-level visual representation of the system architecture has been generated and saved to the project root directory. You can open and view it here:
-**[wildtrack_flowchart.png](file:///d:/9)projects/Animal_alert server/wildtrack_flowchart.png)**
-
-### 2. Logical Data Flow
+### Logical Data Flow
 The diagram below details the data flow between physical input sources, the Python Flask backend service, the YOLOv8 model, the MongoDB storage layer, and client user interfaces:
 
 ```mermaid
@@ -26,7 +50,7 @@ graph TD
     end
 
     subgraph Backend [Flask Backend Server - python server.py]
-        flask_api[Flask REST API Endpoints]:::server
+        flask_api[Flask REST API Endpoints & JWT Auth]:::server
         cv_thread[OpenCV Capture Thread]:::server
         det_thread[Auto-Detection Loop]:::server
         yolo[YOLOv8 AnimalDetector - best.pt]:::server
@@ -49,7 +73,7 @@ graph TD
     yolo -- Detections --> det_thread
     flask_api --> yolo
     det_thread -- Save Alerts --> mongo
-    flask_api -- Save Cameras/Users --> mongo
+    flask_api -- Auth / Users / Cameras --> mongo
     
     flask_api -- MJPEG Stream --> live_preview
     flask_api -- JSON API / Proxy --> react_dash
@@ -60,78 +84,69 @@ graph TD
 
 ## 🗂️ File-by-File Repository Breakdown
 
-Here is a detailed explanation of the role and contents of every file in the server repository:
-
 ### Root Directory Files
-*   **`server.py`**: The core execution engine. Written in Flask, it hosts the REST API endpoints, starts a background OpenCV thread to read from a webcam or RTSP feed, runs an auto-detection thread every 2 seconds, and connects to MongoDB. If MongoDB is offline, it automatically falls back to an in-memory mock mode.
-*   **`requirements.txt`**: List of primary Python library dependencies including Flask, Flask-CORS, OpenCV-python, NumPy, and PyMongo. *(Note: `ultralytics` and `torch` are required for YOLOv8 model execution).*
-*   **`run_server.bat`**: A Windows batch file launcher that simplifies startup. It automatically checks and installs python dependencies from `requirements.txt` and executes `server.py`.
-*   **`fix_model.py`**: A helper utility to convert directory-formatted PyTorch weights export formats into a single serialized `.pt` weight file (`best_fixed.pt`).
-*   **`TODO.md`**: Tasks list noting finished implementations, such as encoding/injecting Base64 images into the alert payload for mobile rendering.
+*   **`server.py`**: The core execution engine. Written in Flask, it hosts the REST API endpoints, JWT authentication logic, RBAC enforcement, background OpenCV thread, YOLOv8 detection thread, and MongoDB connection.
+*   **`requirements.txt`**: List of primary Python library dependencies including Flask, Flask-CORS, Flask-JWT-Extended, OpenCV-python, NumPy, PyMongo, and Bcrypt.
+*   **`run_server.bat`**: A Windows batch file launcher that simplifies startup, handles dependency installation, and starts the server.
+*   **`fix_model.py`**: Utility to convert PyTorch weights formats into a serialized `.pt` file (`best_fixed.pt`).
 
 ### Machine Learning Engine (`ml_models/`)
-*   **`ml_models/detector.py`**: Contains the `AnimalDetector` wrapper class. It loads `best.pt` using `ultralytics.YOLO`, runs inference on BGR numpy arrays, filters out low-confidence outputs (< 40%), and translates raw coordinates to label objects. It defines a set of `DANGEROUS_ANIMALS` used to label threat metrics.
-*   **`ml_models/best.pt`**: The custom-trained YOLOv8 weights used for animal object classification.
-*   **`ml_models/README.md`**: Explains model formats, the returns layout structure, and documents the threat matrix danger levels.
+*   **`detector.py`**: Contains the `AnimalDetector` wrapper class using `ultralytics.YOLO`. Filters low-confidence outputs, translates coordinates, and defines `DANGEROUS_ANIMALS` threat metrics.
+*   **`best.pt`**: Custom-trained YOLOv8 weights for animal object classification.
 
 ### React Management Dashboard (`dashboard/`)
-The web client dashboard is structured inside `dashboard/` and built using React. It contains the following layout components:
-*   **`dashboard/package.json`**: Package configuration listing libraries like `lucide-react` (icons) and `recharts` (charts/graphs) and configures the `"proxy": "http://localhost:5000"` for backend APIs.
-*   **`dashboard/src/App.js` & `App.css`**: Configures the main React Router mapping pages and sidebar grids.
+The web client dashboard is built using React and offers a premium, modern, and dynamic user interface with state-of-the-art micro-animations and color schemes.
+*   **`dashboard/src/App.js`**: Main router, auth gatekeeper, and global state manager.
 *   **`dashboard/src/components/`**:
-    *   `Sidebar.js` / `Sidebar.css`: Navigation sidebar enabling pages transitions.
-    *   `TopBar.js` / `TopBar.css`: Admin header bar displaying profile menus and quick alerts.
+    *   `Sidebar.js`: Dynamic, role-filtered navigation sidebar indicating the user's jurisdiction.
+    *   `TopBar.js`: Context-aware header displaying page titles and role badges.
+    *   `CameraLocationMap.js`: Interactive Google Maps component for pinpointing geographic deployment zones during registration.
 *   **`dashboard/src/pages/`**:
-    *   `Landing.js` / `Landing.css`: Premium system introduction landing portal.
-    *   `Dashboard.js`: Operational dashboard depicting counts (total cameras, alerts count), custom analytics charts, and recent threats.
-    *   `Alerts.js`: Historical log of all animal alerts with locations, timestamps, and confidence percentages.
+    *   `Landing.js`: Premium signup/login portal featuring role-aware registration flows, interactive location mapping, and JWT acquisition.
+    *   `Dashboard.js`: Operational command center depicting live analytics, camera statuses, and recent threats. Includes role-based operation controls.
+    *   `UsersManagement.js`: Beautiful personnel management table allowing Agency and Area admins to view, search, and revoke access of subordinate personnel.
+    *   `Alerts.js`: Historical log of all animal alerts with locations and confidence metrics.
     *   `Cameras.js`: Management view allowing adding, editing, and deleting cameras.
-    *   `MultiView.js`: Screen that renders multi-grid feeds of all registered camera feeds concurrently.
-    *   `CctvSetup.js`: Documentation detailing how to configure CCTV RTSP feeds.
-    *   `AndroidGuide.js`: Guidelines page instructing how to setup the WildTrack Android app.
-    *   `ServerConfig.js`: Server parameters controller showing database connections status.
-    *   `Settings.js`: Interface customization options, dark mode toggle, and settings storage.
+    *   `MultiView.js`: Grid view of all active registered camera feeds.
+    *   `CctvSetup.js`, `AndroidGuide.js`, `ServerConfig.js`, `Settings.js`: Documentation and configuration modules.
 
 ---
 
 ## ⚙️ How the System Operates
 
-### 1. Video Capture & ML Inference
-*   The server spawns a daemon thread (`_webcam_thread()`) that captures frames from camera device 0 (laptop webcam) or an RTSP CCTV video URL using OpenCV.
-*   A separate auto-detection daemon thread (`_auto_detect_loop()`) fetches the latest frame every 2 seconds and runs it through `detector.detect()`.
-*   If an animal is detected (e.g. "bear"), it calculates the highest confidence detection, encodes the frame to a Base64 string, and sets `latest_alert` state.
-*   If connected to MongoDB, it inserts the alert document with timestamp and camera coordinate details into the `alerts` database collection.
+### 1. Security & Authentication
+*   Users register via the `Landing.js` interface, providing role-specific geographic data (Country/State for Agency Admin, down to Map Coordinates for Area Controllers).
+*   `server.py` hashes passwords with `bcrypt` and stores personnel in MongoDB.
+*   Login issues a JWT containing the user's identity, role, and geographic jurisdiction.
+*   All sensitive API routes (`/api/users`, `/api/cameras`, etc.) enforce `@jwt_required()` and execute strict boundary checks ensuring users can only interact with data inside their jurisdiction.
 
-### 2. External Camera Frame Push
-External IoT devices or standalone security cameras can push pre-processed or raw frames to the server using the `POST /camera/detect` endpoint, which registers the threat, updates the global state, and returns a JSON detection report.
+### 2. Video Capture & ML Inference
+*   Daemon thread (`_webcam_thread()`) captures frames via OpenCV (webcam or RTSP).
+*   Auto-detection thread (`_auto_detect_loop()`) processes frames through YOLOv8 every 2 seconds.
+*   Detected threats are encoded (Base64), stored in MongoDB (`alerts` collection), and pushed to the global `latest_alert` state.
 
 ### 3. React Web Interface
-The React App polls the MongoDB CRUD endpoints to:
-*   Add, list, or delete camera hardware registries.
-*   Display animal classification telemetry and logs.
-*   Plot alerts volume trends over time using interactive graphs.
+The React App acts as the primary command center. Based on the JWT role, the interface dynamically reconfigures itself to expose or hide features (e.g., App Users cannot see the Personnel Management page).
 
 ### 4. WildTrack Android Mobile Client
-*   **Polling Loop**: The Android app contains an `AlertService` running in the background, polling `GET /latest-alert` from the server every 3 seconds.
-*   **Notifications**: When `animal_detected` is `true`, the app displays a high-priority alert notification on the phone.
-*   **Alert Feed & Imagery**: The app decodes the base64 `image` payload from the server and displays the exact frame that triggered the alert, so users can see the animal in real-time.
-*   **Theme Adjustments**: Supports switching between a bright, clean light mode theme and a dark mode.
+*   Polls `GET /latest-alert` continuously.
+*   Triggers high-priority audible alerts and visual notifications upon dangerous animal detection.
+*   Decodes Base64 payloads to display the exact frame containing the threat.
 
 ---
 
 ## 🚦 API Reference
 
-| Endpoint            | Method | Payload                     | Description                                                         |
-|---------------------|--------|-----------------------------|---------------------------------------------------------------------|
-| `/health`           | `GET`  | *None*                      | Validates server startup status.                                    |
-| `/latest-alert`     | `GET`  | *None*                      | Retreives current active alert and Base64 frame.                    |
-| `/register/camera`  | `POST` | `{"camera_id": "...", "location": "lat,lng"}` | Registers location grids of incoming camera sources.                       |
-| `/camera/detect`    | `POST` | `{"camera_id": "...", "image": "base64_string..."}` | Endpoint for external CCTV cameras to post frames.                   |
-| `/preview`          | `GET`  | *None*                      | Hosts a live HTML streaming browser window overlay.                 |
-| `/video_feed`       | `GET`  | *None*                      | Standard MJPEG video feed.                                          |
-| `/api/auth/login`   | `POST` | `{"email": "...", "password": "..."}` | Log in administrative dashboard panel.                    |
-| `/api/cameras`      | `GET` / `POST` | Camera details json | Retrieves list of registered cameras / adds camera.                 |
-| `/api/alerts`       | `GET` / `DELETE` | *None* | Retrieves alert database histories / clears log.                               |
+| Endpoint                  | Method | Description                                                                 | Auth Needed |
+|---------------------------|--------|-----------------------------------------------------------------------------|-------------|
+| `/api/auth/register`      | `POST` | Registers new users with Role and Geographic Jurisdiction parameters.       | No          |
+| `/api/auth/login`         | `POST` | Authenticates and returns JWT `access_token`.                               | No          |
+| `/api/users`              | `GET`  | Returns subordinate personnel scoped to caller's role/jurisdiction.         | Yes         |
+| `/api/users/<email>`      | `DEL`  | Revokes access for a subordinate user, verifying state/district boundaries. | Yes         |
+| `/api/cameras`            | `GET/POST` | Manages camera registries.                                              | Yes         |
+| `/latest-alert`           | `GET`  | Retreives current active alert and Base64 frame for mobile apps.            | Optional    |
+| `/camera/detect`          | `POST` | Endpoint for external CCTV cameras to push frames for inference.            | No          |
+| `/video_feed`             | `GET`  | Standard MJPEG video feed for dashboard streaming.                          | No          |
 
 ---
 
@@ -139,38 +154,24 @@ The React App polls the MongoDB CRUD endpoints to:
 
 ### System Pre-requisites
 *   Python 3.8 to 3.11 installed.
-*   MongoDB installed and running locally on port 27017 (Optional, server runs mock mode without it).
+*   MongoDB installed and running locally on port 27017.
 *   Node.js and npm (For compiling/running React frontend).
 
 ### 1. Server Setup
 Initialize python requirements:
 ```bash
 pip install -r requirements.txt
-pip install ultralytics torch torchvision
 ```
-*Alternatively, simply double click the launcher script **`run_server.bat`** which automatically handles virtual environments and dependencies.*
+*Alternatively, double click the launcher script **`run_server.bat`** which automatically handles dependencies and starts the server.*
 
-### 2. Swapping the Input from Webcam to RTSP CCTV
-In `server.py`, change:
-```python
-cap = cv2.VideoCapture(0) # laptop webcam
-```
-to your security camera RTSP feed:
-```python
-cap = cv2.VideoCapture("rtsp://admin:password@192.168.1.100:554/stream1")
-```
-
-### 3. Deploying React Frontend
+### 2. Deploying React Frontend
 In a separate terminal tab:
 ```bash
 cd dashboard
 npm install
 npm run build
+npm start
 ```
-*(The Flask server automatically hosts the compiled React production build located under `dashboard/build/`).*
 
-### 4. Running the Android Client
-1. Get your computer's local IP address (e.g. `ipconfig` on Windows, e.g. `192.168.1.25`).
-2. Connect your Android phone to the same Wi-Fi network as the computer.
-3. Open the Android application Settings page, set the Base URL to: `http://192.168.1.25:5000/`.
-4. Return to the dashboard; you will start receiving real-time alarm alerts and visual images on your phone!
+### 3. Running the System
+Once started, the backend API runs on `http://localhost:5000` and the React frontend on `http://localhost:3000`. Navigate to the React app to register your first **Central Agency Admin** account to begin configuring the network!
