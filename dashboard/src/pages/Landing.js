@@ -6,13 +6,13 @@ import {
   ShieldAlert, Activity, Users, Send, Info, Key, LogOut
 } from 'lucide-react';
 import './Landing.css';
-import { CameraLocationMap, AreaPolygonMap } from '../components/CameraLocationMap';
+import { CameraLocationMap } from '../components/CameraLocationMap';
 
 export default function Landing({ user, onLogin, onLogout, setPage }) {
   // Navigation & UI States
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [authModal, setAuthModal] = useState(null); // 'login' | 'signup' | null
-  const [authForm, setAuthForm] = useState({ name: '', email: '', password: '', confirmPassword: '' });
+  const [authForm, setAuthForm] = useState({ name: '', email: '', password: '', confirmPassword: '', role: 'USER' });
   const [authError, setAuthError] = useState('');
   const [authSuccess, setAuthSuccess] = useState('');
   const [activeService, setActiveService] = useState('agri');
@@ -76,7 +76,7 @@ export default function Landing({ user, onLogin, onLogout, setPage }) {
         localStorage.setItem('wt_token', data.token);
         onLogin(data.user);
         setAuthModal(null);
-        setAuthForm({ name: '', email: '', password: '', confirmPassword: '' });
+        setAuthForm({ name: '', email: '', password: '', confirmPassword: '', role: 'USER' });
         setPage('dashboard');
       } else {
         setAuthError(data.message || 'Invalid email or password');
@@ -99,7 +99,7 @@ export default function Landing({ user, onLogin, onLogout, setPage }) {
 
   const handleSignupSubmit = async (e) => {
     e.preventDefault();
-    const { name, email, password, confirmPassword, role, country, state, district, areaPolygon } = authForm;
+    const { name, email, password, confirmPassword, role, country, state, district, areaLocation } = authForm;
 
     if (!name || !email || !password || !confirmPassword) {
       setAuthError('Please fill in all fields');
@@ -119,7 +119,7 @@ export default function Landing({ user, onLogin, onLogout, setPage }) {
       const response = await fetch('/api/auth/register', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, email, password, role: role || 'USER', country, state, district, areaPolygon })
+        body: JSON.stringify({ name, email, password, role: role || 'USER', country, state, district, areaLocation })
       });
       const data = await response.json();
       if (response.ok && data.status === 'success') {
@@ -130,7 +130,7 @@ export default function Landing({ user, onLogin, onLogout, setPage }) {
         try {
           const users = JSON.parse(localStorage.getItem('wt_users') || '[]');
           if (!users.find(u => u.email.toLowerCase() === email.toLowerCase())) {
-            users.push({ name, email, password, role: role || 'USER', country, state, district, areaPolygon });
+            users.push({ name, email, password, role: role || 'USER', country, state, district, areaLocation });
             localStorage.setItem('wt_users', JSON.stringify(users));
           }
         } catch (e) {
@@ -138,10 +138,10 @@ export default function Landing({ user, onLogin, onLogout, setPage }) {
         }
 
         setTimeout(() => {
-          onLogin(data.user || { name, email });
+          onLogin(data.user || { name, email, role: role || 'USER', country, state, district, areaLocation });
           setAuthModal(null);
           setAuthSuccess('');
-          setAuthForm({ name: '', email: '', password: '', confirmPassword: '' });
+          setAuthForm({ name: '', email: '', password: '', confirmPassword: '', role: 'USER' });
           setPage('dashboard');
         }, 1500);
       } else {
@@ -159,7 +159,7 @@ export default function Landing({ user, onLogin, onLogout, setPage }) {
         return;
       }
 
-      const newUser = { name, email, password, role: role || 'USER', country, state, district, areaPolygon };
+      const newUser = { name, email, password, role: role || 'USER', country, state, district, areaLocation };
       users.push(newUser);
       try {
         localStorage.setItem('wt_users', JSON.stringify(users));
@@ -172,7 +172,7 @@ export default function Landing({ user, onLogin, onLogout, setPage }) {
         onLogin(newUser);
         setAuthModal(null);
         setAuthSuccess('');
-        setAuthForm({ name: '', email: '', password: '', confirmPassword: '' });
+        setAuthForm({ name: '', email: '', password: '', confirmPassword: '', role: 'USER' });
         setPage('dashboard');
       }, 1500);
     }
@@ -1187,9 +1187,9 @@ export default function Landing({ user, onLogin, onLogout, setPage }) {
                       onChange={handleAuthInputChange}
                       style={{width: '100%'}}
                     >
-                      <option value="USER">App User / Resident</option>
-                      <option value="AREA_ADMIN">Area Admin (Local Scope)</option>
-                      <option value="AGENCY_ADMIN">Central Agency Admin (District Scope)</option>
+                      <option value="USER">🟢 App User / Field Resident</option>
+                      <option value="AREA_ADMIN">🔵 Area Controller (District Scope)</option>
+                      <option value="AGENCY_ADMIN">🟣 Central Agency Admin (State-wide)</option>
                     </select>
                   </div>
 
@@ -1230,18 +1230,16 @@ export default function Landing({ user, onLogin, onLogout, setPage }) {
                             style={{marginBottom: '15px'}}
                           />
                           
-                          <label className="form-label">Control Area Boundary (Draw on Map)</label>
+                          <label className="form-label">Control Area Center (Drop Pin on Map)</label>
                           <div style={{border: '1px solid var(--border)', borderRadius: '8px', overflow: 'hidden'}}>
-                            <AreaPolygonMap 
-                              coordinates={authForm.areaPolygon || []} 
-                              onCoordinatesChange={(coords) => setAuthForm({ ...authForm, areaPolygon: coords })}
+                            <CameraLocationMap 
+                              location={authForm.areaLocation || '18.5204,73.8567'} 
+                              onLocationChange={(loc) => setAuthForm({ ...authForm, areaLocation: loc })}
                               height={200}
                             />
                           </div>
                           <div style={{fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px'}}>
-                            {authForm.areaPolygon && authForm.areaPolygon.length > 0 
-                              ? `${authForm.areaPolygon.length} boundary points selected` 
-                              : 'Click on the map to define your Area'}
+                            📍 Selected: {authForm.areaLocation || '18.5204,73.8567'}
                           </div>
                         </>
                       )}

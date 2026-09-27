@@ -1,10 +1,10 @@
-import { Camera, AlertTriangle, CheckCircle, Activity, Clock, Eye, Play, Square, RefreshCw, Star } from 'lucide-react';
+import { Camera, AlertTriangle, CheckCircle, Activity, Clock, Eye, Play, Square, RefreshCw, Star, Shield, MapPin } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
 import { useMemo } from 'react';
 import { isDangerousDetection } from '../utils/detection';
 
 // Fix: accept serverBase from props so the live feed URL follows user-configured server address
-export default function Dashboard({ serverStatus, latestAlert, alertHistory, cameras, serverBase, systemStatus, setMonitoring, refreshAll, personalPrimary, effectivePrimary }) {
+export default function Dashboard({ serverStatus, latestAlert, alertHistory, cameras, serverBase, systemStatus, setMonitoring, refreshAll, personalPrimary, effectivePrimary, user }) {
   const activeCams = systemStatus?.cameras?.active ?? cameras.filter(c => c.status === 'active').length;
   const totalCams = systemStatus?.cameras?.total ?? cameras.length;
   const offlineCams = systemStatus?.cameras?.offline ?? cameras.filter(c => c.status === 'offline').length;
@@ -50,9 +50,57 @@ export default function Dashboard({ serverStatus, latestAlert, alertHistory, cam
 
   const recent = alertHistory.slice(0, 5);
 
+  const roleLabel = user?.role === 'AGENCY_ADMIN' ? 'Central Agency Admin' : user?.role === 'AREA_ADMIN' ? 'Area Controller' : 'Field User';
+  const roleColor = user?.role === 'AGENCY_ADMIN' ? '#8b5cf6' : user?.role === 'AREA_ADMIN' ? '#3b82f6' : '#10b981';
+  const scopeText = user?.role === 'AGENCY_ADMIN'
+    ? `${user.state || user.country || 'All Districts'} · State-wide Command`
+    : user?.role === 'AREA_ADMIN'
+      ? `${user.district || 'Local'} · ${user.state || user.country || ''}`
+      : `${user?.district || user?.state || 'Assigned Zone'}`;
+
   return (
     <div className="dashboard">
+      {/* ─── ROLE WELCOME BANNER ─── */}
+      {user && (
+        <div className="card" style={{
+          marginBottom: 16, padding: '18px 20px',
+          background: `linear-gradient(135deg, ${roleColor}08, ${roleColor}18)`,
+          borderColor: `${roleColor}30`,
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
+            <div style={{
+              width: 44, height: 44, borderRadius: '50%',
+              background: `${roleColor}20`, color: roleColor,
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              fontWeight: 800, fontSize: '1.1rem', fontFamily: 'var(--font-mono)',
+            }}>
+              {user.name ? user.name[0].toUpperCase() : '?'}
+            </div>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontWeight: 700, fontSize: '1rem' }}>
+                Welcome, {user.name || 'Operator'}
+              </div>
+              <div className="text-muted" style={{ fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', marginTop: 2 }}>
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, color: roleColor, fontWeight: 600 }}>
+                  <Shield size={11}/> {roleLabel}
+                </span>
+                <span>·</span>
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+                  <MapPin size={11}/> {scopeText}
+                </span>
+              </div>
+            </div>
+            {user.role !== 'USER' && (
+              <div style={{ fontSize: '0.72rem', padding: '4px 10px', borderRadius: 6, background: `${roleColor}15`, color: roleColor, fontWeight: 700, letterSpacing: '0.04em' }}>
+                {user.role === 'AGENCY_ADMIN' ? 'FULL COMMAND ACCESS' : 'AREA COMMAND ACCESS'}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Operations controls */}
+      {(user?.role === 'AGENCY_ADMIN' || user?.role === 'AREA_ADMIN') && (
       <div className="card" style={{marginBottom:16, display:'flex', alignItems:'center', justifyContent:'space-between', flexWrap:'wrap', gap:12}}>
         <div>
           <div style={{fontSize:11, color:'var(--text-muted)', marginBottom:4}}>Operations</div>
@@ -78,6 +126,7 @@ export default function Dashboard({ serverStatus, latestAlert, alertHistory, cam
           </button>
         </div>
       </div>
+      )}
 
       {/* Stat row */}
       <div className="stats-grid">

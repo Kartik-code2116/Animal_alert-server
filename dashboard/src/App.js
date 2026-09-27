@@ -36,8 +36,9 @@ export default function App() {
   });
 
   const handleLogin = (u) => {
-    setUser(u);
-    localStorage.setItem('wt_current_user', JSON.stringify(u));
+    const userWithRole = { ...u, role: u.role || 'USER' };
+    setUser(userWithRole);
+    localStorage.setItem('wt_current_user', JSON.stringify(userWithRole));
   };
   
   const handleLogout = () => {

@@ -53,7 +53,10 @@ export default function Sidebar({ page, setPage, serverStatus, cameras, user, on
 
       {/* Nav with sections */}
       <nav className="sidebar-nav">
-        {NAV_SECTIONS.filter(section => !user || section.roles.includes(user.role)).map(section => (
+        {NAV_SECTIONS.filter(section => {
+          const effectiveRole = user?.role || 'USER';
+          return section.roles.includes(effectiveRole);
+        }).map(section => (
           <div key={section.label}>
             <div className="nav-section-label">{section.label}</div>
             {NAV.filter(n => section.ids.includes(n.id)).map(({ id, label, icon: Icon }) => (
@@ -77,12 +80,24 @@ export default function Sidebar({ page, setPage, serverStatus, cameras, user, on
       {/* Operator Account block */}
       {user && (
         <div className="sidebar-user-block">
-          <div className="user-avatar">
+          <div className="user-avatar" style={{
+            background: user.role === 'AGENCY_ADMIN' ? 'rgba(139,92,246,0.15)' : user.role === 'AREA_ADMIN' ? 'rgba(59,130,246,0.15)' : 'rgba(16,185,129,0.15)',
+            color: user.role === 'AGENCY_ADMIN' ? '#a78bfa' : user.role === 'AREA_ADMIN' ? '#60a5fa' : '#34d399',
+          }}>
             <span className="mono">{user.name ? user.name[0].toUpperCase() : 'O'}</span>
           </div>
           <div className="user-meta">
             <div className="user-name">{user.name || 'Operator'}</div>
-            <div className="user-role">{user.role === 'AGENCY_ADMIN' ? 'District Admin' : user.role === 'AREA_ADMIN' ? 'Area Admin' : 'App User'}</div>
+            <div className="user-role" style={{
+              color: user.role === 'AGENCY_ADMIN' ? '#a78bfa' : user.role === 'AREA_ADMIN' ? '#60a5fa' : '#34d399',
+            }}>
+              {user.role === 'AGENCY_ADMIN' ? 'Central Agency Admin' : user.role === 'AREA_ADMIN' ? 'Area Controller' : 'Field User'}
+            </div>
+            {(user.district || user.state) && (
+              <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2, display: 'flex', alignItems: 'center', gap: 3 }}>
+                📍 {user.district || user.state || user.country || ''}
+              </div>
+            )}
           </div>
           <button className="user-logout-btn" onClick={onLogout} title="Log Out">
             <LogOut size={14}/>

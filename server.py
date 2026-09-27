@@ -499,15 +499,17 @@ def get_managed_users():
     identity = get_jwt_identity()
     role = identity.get("role")
     district = identity.get("district")
-    areaLocation = identity.get("areaLocation")
+    
+    # Look up the full user record for state info
+    caller = db["users"].find_one({"email": identity.get("email")})
+    caller_state = caller.get("state", "") if caller else ""
     
     query = {}
     if role == "AGENCY_ADMIN":
-        # Agency Admins can see Area Admins in their district
-        query = {"role": "AREA_ADMIN", "district": district}
+        # Agency Admins see ALL Area Admins and App Users in their state
+        query = {"state": caller_state, "role": {"$in": ["AREA_ADMIN", "USER"]}}
     elif role == "AREA_ADMIN":
-        # Area Admins can see regular App Users in their area
-        # We could match strictly on district, but for simplicity let's match on the areaLocation or district
+        # Area Admins see regular App Users in their district
         query = {"role": "USER", "district": district}
     else:
         # Regular users cannot manage anyone
@@ -529,12 +531,14 @@ def delete_managed_user(user_email):
     role = identity.get("role")
     district = identity.get("district")
     
-    # Simple check: verify the user to be deleted belongs to the caller's district
+    caller = db["users"].find_one({"email": identity.get("email")})
+    caller_state = caller.get("state", "") if caller else ""
+    
     target_user = db["users"].find_one({"email": user_email})
     if not target_user:
         return jsonify({"status": "error", "message": "User not found"}), 404
         
-    if role == "AGENCY_ADMIN" and target_user.get("role") == "AREA_ADMIN" and target_user.get("district") == district:
+    if role == "AGENCY_ADMIN" and target_user.get("role") in ["AREA_ADMIN", "USER"] and target_user.get("state") == caller_state:
         db["users"].delete_one({"email": user_email})
         return jsonify({"status": "success"})
     elif role == "AREA_ADMIN" and target_user.get("role") == "USER" and target_user.get("district") == district:
