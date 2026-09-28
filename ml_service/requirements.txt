@@ -1,0 +1,10 @@
+flask
+flask-cors
+flask-bcrypt
+opencv-python
+numpy
+ultralytics
+requests
+pymongo
+flask-jwt-extended
+pyopenssl
